@@ -460,7 +460,6 @@ export class BotImage extends Base {
 
 		const pixelsSum = this.pixels.pixels.length * this.pixels.pixels[0]!.length;
 
-		console.log('this.colors', this.colors);
 		if (
 			this.colors.length !== this.pixels.colors.size ||
 			this.colors.some((x) => !this.pixels.colors.has(x.realColor))

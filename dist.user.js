@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         wplace-bot fixed
 // @namespace    https://github.com/Readixyee
-// @version      1.7.0
+// @version      1.7.1
 // @description  Bot to automate painting on website https://wplace.live
 // @author       Readixyee, SoundOfTheSky
 // @license      MPL-2.0
@@ -1270,7 +1270,6 @@ class BotImage extends Base2 {
   updateColors() {
     this.$colors.innerHTML = "";
     const pixelsSum = this.pixels.pixels.length * this.pixels.pixels[0].length;
-    console.log("this.colors", this.colors);
     if (this.colors.length !== this.pixels.colors.size || this.colors.some((x) => !this.pixels.colors.has(x.realColor))) {
       this.colors = this.pixels.colors.values().toArray().sort((a, b) => b.amount - a.amount).map((color) => ({
         realColor: color.realColor,
