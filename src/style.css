@@ -33,6 +33,8 @@
 	top: 0;
 	left: 0;
 	z-index: 1000;
+	display: flex;
+	flex-direction: column;
 	width: 256px;
 	height: 100dvh;
 	border-right: var(--text) 2px solid;
@@ -44,10 +46,32 @@
 }
 
 .wwidget .title {
+	flex-shrink: 0;
 	border-bottom: var(--text) 2px solid;
 	background-color: var(--main);
 	font-size: 32px;
 	text-align: center;
+	cursor: text;
+	user-select: none;
+}
+
+.wwidget .title input {
+	width: 100%;
+	background: transparent;
+	border: none;
+	outline: none;
+	text-align: center;
+	font: inherit;
+	color: inherit;
+	cursor: text;
+}
+
+.wwidget > .wform {
+	display: flex;
+	flex-direction: column;
+	flex: 1;
+	overflow: hidden;
+	min-height: 0;
 }
 
 .wwidget.wopen .wopen-button div {
@@ -78,9 +102,10 @@
 
 .wwidget .images {
 	display: block;
+	flex: 0 1 auto;
+	overflow-x: hidden;
 	overflow-y: auto;
-	height: auto;
-	max-height: 240px;
+	min-height: 0;
 }
 
 .wwidget .images .image {

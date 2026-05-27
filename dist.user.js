@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         wplace-bot fixed
 // @namespace    https://github.com/Readixyee
-// @version      1.7.1
+// @version      1.7.2
 // @description  Bot to automate painting on website https://wplace.live
 // @author       Readixyee, SoundOfTheSky
 // @license      MPL-2.0
@@ -1663,6 +1663,8 @@ var style_default = `/* stylelint-disable declaration-no-important */
 	top: 0;
 	left: 0;
 	z-index: 1000;
+	display: flex;
+	flex-direction: column;
 	width: 256px;
 	height: 100dvh;
 	border-right: var(--text) 2px solid;
@@ -1674,10 +1676,32 @@ var style_default = `/* stylelint-disable declaration-no-important */
 }
 
 .wwidget .title {
+	flex-shrink: 0;
 	border-bottom: var(--text) 2px solid;
 	background-color: var(--main);
 	font-size: 32px;
 	text-align: center;
+	cursor: text;
+	user-select: none;
+}
+
+.wwidget .title input {
+	width: 100%;
+	background: transparent;
+	border: none;
+	outline: none;
+	text-align: center;
+	font: inherit;
+	color: inherit;
+	cursor: text;
+}
+
+.wwidget > .wform {
+	display: flex;
+	flex-direction: column;
+	flex: 1;
+	overflow: hidden;
+	min-height: 0;
 }
 
 .wwidget.wopen .wopen-button div {
@@ -1708,9 +1732,10 @@ var style_default = `/* stylelint-disable declaration-no-important */
 
 .wwidget .images {
 	display: block;
+	flex: 0 1 auto;
+	overflow-x: hidden;
 	overflow-y: auto;
-	height: auto;
-	max-height: 240px;
+	min-height: 0;
 }
 
 .wwidget .images .image {
@@ -2254,6 +2279,7 @@ class Widget extends Base2 {
     else
       this.element.classList.remove("wopen");
   }
+  $title;
   $settings;
   $status;
   $minimize;
@@ -2273,6 +2299,7 @@ class Widget extends Base2 {
     document.body.append(this.element);
     this.populateElementsWithSelector(this.element, {
       $wopenButton: ".wopen-button",
+      $title: ".title",
       $settings: ".wform",
       $status: ".wstatus",
       $minimize: ".minimize",
@@ -2290,6 +2317,7 @@ class Widget extends Base2 {
     this.$strategy.addEventListener("change", () => {
       this.bot.strategy = this.$strategy.value;
     });
+    this.setupTitleEditing();
     this.update();
     this.open = true;
   }
@@ -2355,6 +2383,8 @@ class Widget extends Base2 {
     });
   }
   update() {
+    if (!this.$title.querySelector("input"))
+      this.$title.textContent = this.bot.name;
     this.$strategy.value = this.bot.strategy;
     let maxTasks = 0;
     let totalTasks = 0;
@@ -2402,6 +2432,38 @@ class Widget extends Base2 {
       $image.querySelector(".toggle").textContent = image.active ? "ON" : "OFF";
     }
   }
+  setupTitleEditing() {
+    this.$title.addEventListener("click", () => {
+      if (this.$title.querySelector("input"))
+        return;
+      const input = document.createElement("input");
+      input.value = this.bot.name;
+      this.$title.textContent = "";
+      this.$title.append(input);
+      input.select();
+      const commit = () => {
+        const newName = input.value.trim() || "WPlace-bot";
+        this.bot.name = newName;
+        this.$title.textContent = newName;
+        save(this.bot);
+      };
+      const cancel = () => {
+        this.$title.textContent = this.bot.name;
+      };
+      input.addEventListener("keydown", (e) => {
+        if (e.key === "Enter") {
+          e.preventDefault();
+          input.blur();
+        }
+        if (e.key === "Escape") {
+          input.removeEventListener("blur", commit);
+          cancel();
+        }
+      });
+      input.addEventListener("blur", commit);
+      input.focus();
+    });
+  }
   setDisabled(name, disabled) {
     this.element.querySelector("." + name).disabled = disabled;
   }
@@ -2436,6 +2498,7 @@ class WPlaceBot {
   me;
   $stars = [];
   strategy = "SEQUENTIAL" /* SEQUENTIAL */;
+  name = "WPlace-bot";
   images = [];
   widget = new Widget(this);
   markerPixelPositionResolvers = [];
@@ -2459,6 +2522,7 @@ class WPlaceBot {
         });
       }
       this.strategy = save2.strategy;
+      this.name = save2.name ?? "WPlace-bot";
     }
     const style = document.createElement("style");
     style.textContent = style_default.replace("FAKE_FAVORITE_LOCATIONS", FAVORITE_LOCATIONS.length.toString());
@@ -2493,6 +2557,7 @@ class WPlaceBot {
       this.updateTasks();
       this.widget.setDisabled("draw", false);
       this.widget.setDisabled("add-image", false);
+      this.widget.update();
     });
   }
   draw() {
@@ -2597,6 +2662,7 @@ class WPlaceBot {
   toJSON() {
     return {
       version: SAVE_VERSION,
+      name: this.name,
       images: this.images.map((x) => x.toJSON()),
       strategy: this.strategy
     };

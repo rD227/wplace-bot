@@ -69,6 +69,9 @@ export class WPlaceBot {
 	/** Strategy how to distribute draw calls between images */
 	public strategy = BotStrategy.SEQUENTIAL;
 
+	/** Widget display name */
+	public name = 'WPlace-bot';
+
 	/** Images on canvas */
 	public images: BotImage[] = [];
 
@@ -102,6 +105,7 @@ export class WPlaceBot {
 				});
 			}
 			this.strategy = save.strategy;
+			this.name = save.name ?? 'WPlace-bot';
 		}
 
 		const style = document.createElement('style');
@@ -148,6 +152,7 @@ export class WPlaceBot {
 
 			this.widget.setDisabled('draw', false);
 			this.widget.setDisabled('add-image', false);
+			this.widget.update();
 		});
 	}
 	/** Start drawing */
@@ -269,6 +274,7 @@ export class WPlaceBot {
 	public toJSON() {
 		return {
 			version: SAVE_VERSION,
+			name: this.name,
 			images: this.images.map((x) => x.toJSON()),
 			strategy: this.strategy,
 		};

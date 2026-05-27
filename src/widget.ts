@@ -36,6 +36,7 @@ export class Widget extends Base {
 		else this.element.classList.remove('wopen');
 	}
 
+	protected readonly $title!: HTMLDivElement;
 	protected readonly $settings!: HTMLDivElement;
 	protected readonly $status!: HTMLDivElement;
 	protected readonly $minimize!: HTMLButtonElement;
@@ -58,6 +59,7 @@ export class Widget extends Base {
 
 		this.populateElementsWithSelector(this.element, {
 			$wopenButton: '.wopen-button',
+			$title: '.title',
 			$settings: '.wform',
 			$status: '.wstatus',
 			$minimize: '.minimize',
@@ -80,6 +82,7 @@ export class Widget extends Base {
 			this.bot.strategy = this.$strategy.value as BotStrategy;
 		});
 
+		this.setupTitleEditing();
 		this.update();
 		this.open = true;
 	}
@@ -168,6 +171,7 @@ export class Widget extends Base {
 
 	/** Update widget position and contents */
 	public update() {
+		if (!this.$title.querySelector('input')) this.$title.textContent = this.bot.name;
 		this.$strategy.value = this.bot.strategy;
 		// Progress
 		let maxTasks = 0;
@@ -213,12 +217,49 @@ export class Widget extends Base {
 				image.active = !image.active;
 				$image.classList.toggle('inactive', !image.active);
 				this.update();
-                image.update();
+				image.update();
 				save(this.bot);
 			});
 
 			$image.querySelector<HTMLButtonElement>('.toggle')!.textContent = image.active ? 'ON' : 'OFF';
 		}
+	}
+
+	/** Make the title bar click-to-rename */
+	private setupTitleEditing() {
+		this.$title.addEventListener('click', () => {
+			if (this.$title.querySelector('input')) return; // already editing
+
+			const input = document.createElement('input');
+			input.value = this.bot.name;
+			this.$title.textContent = '';
+			this.$title.append(input);
+			input.select();
+
+			const commit = () => {
+				const newName = input.value.trim() || 'WPlace-bot';
+				this.bot.name = newName;
+				this.$title.textContent = newName;
+				save(this.bot);
+			};
+
+			const cancel = () => {
+				this.$title.textContent = this.bot.name;
+			};
+
+			input.addEventListener('keydown', (e) => {
+				if (e.key === 'Enter') {
+					e.preventDefault();
+					input.blur();
+				}
+				if (e.key === 'Escape') {
+					input.removeEventListener('blur', commit);
+					cancel();
+				}
+			});
+			input.addEventListener('blur', commit);
+			input.focus();
+		});
 	}
 
 	/** Disable/enable element by class name */
