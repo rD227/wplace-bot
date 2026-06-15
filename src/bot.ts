@@ -546,7 +546,8 @@ export class WPlaceBot {
 						new WorldPosition(this, +pixelMatch[1]!, +pixelMatch[2]!, +pixelMatch[3]!, +pixelMatch[4]!)
 					);
 				this.markerPixelPositionResolvers.length = 0;
-			}
+
+				}
 			return response;
 		};
 	}

@@ -31,7 +31,7 @@ export enum ImageStrategy {
 
 export class BotImage extends Base {
 	public static async fromJSON(bot: WPlaceBot, data: ReturnType<BotImage['toJSON']>) {
-		return new BotImage(
+		const image = new BotImage(
 			bot,
 			WorldPosition.fromJSON(bot, data.position),
 			await Pixels.fromJSON(bot, data.pixels),
@@ -43,6 +43,8 @@ export class BotImage extends Base {
 			data.lock,
 			data.active ?? true
 		);
+		image.selection = data.selection ?? null;
+		return image;
 	}
 
 	public readonly element = document.createElement('div');
@@ -62,8 +64,12 @@ export class BotImage extends Base {
 		clientY: number;
 	};
 
+	public selection: { x: number; y: number; width: number; height: number } | null = null;
+	protected selectStart: { clientX: number; clientY: number } | null = null;
+
 	protected readonly $brightness!: HTMLInputElement;
 	protected readonly $canvas!: HTMLCanvasElement;
+	protected readonly $closePopup!: HTMLButtonElement;
 	protected readonly $colors!: HTMLDivElement;
 	protected readonly $delete!: HTMLButtonElement;
 	protected readonly $drawColorsInOrder!: HTMLInputElement;
@@ -71,12 +77,16 @@ export class BotImage extends Base {
 	protected readonly $drawTransparent!: HTMLInputElement;
 	protected readonly $export!: HTMLDivElement;
 	protected readonly $lock!: HTMLButtonElement;
+	protected readonly $selectionRect!: HTMLDivElement;
 	protected readonly $opacity!: HTMLInputElement;
+	protected readonly $popup!: HTMLDivElement;
 	protected readonly $progressLine!: HTMLDivElement;
 	protected readonly $progressText!: HTMLSpanElement;
 	protected readonly $resetSize!: HTMLButtonElement;
 	protected readonly $resetSizeSpan!: HTMLSpanElement;
+	protected readonly $resizeNumber!: HTMLInputElement;
 	protected readonly $settings!: HTMLDivElement;
+	protected readonly $settingsButton!: HTMLButtonElement;
 	protected readonly $strategy!: HTMLSelectElement;
 	protected readonly $topbar!: HTMLDivElement;
 	protected readonly $wrapper!: HTMLDivElement;
@@ -116,6 +126,7 @@ export class BotImage extends Base {
 			$drawTransparent: '.draw-transparent',
 			$export: '.export',
 			$lock: '.lock',
+			$selectionRect: '.selection-rect',
 			$settingsButton: '.settings',
 			$popup: '.wform.popup',
 			$closePopup: '.close-popup',
@@ -332,16 +343,93 @@ export class BotImage extends Base {
 		// Export
 		this.registerEvent(this.$export, 'click', this.export.bind(this));
 
+		// Right-click drag to select area — bounding-box hit test because right-clicks
+		// pass through our canvas to the maplibre canvas below.
+		this.registerEvent(
+			window,
+			'mousedown',
+			(e: MouseEvent) => {
+				if (e.button !== 2) return;
+				const rect = this.$canvas.getBoundingClientRect();
+				if (e.clientX < rect.left || e.clientX > rect.right || e.clientY < rect.top || e.clientY > rect.bottom) return;
+				e.preventDefault();
+				e.stopPropagation();
+				this.selectStart = { clientX: e.clientX, clientY: e.clientY };
+			},
+			{ passive: false, capture: true }
+		);
+		this.registerEvent(
+			window,
+			'mousemove',
+			(e: MouseEvent) => {
+				if (!this.selectStart) return;
+				const rect = this.$canvas.getBoundingClientRect();
+				const x1 = this.selectStart.clientX - rect.left;
+				const y1 = this.selectStart.clientY - rect.top;
+				const x2 = e.clientX - rect.left;
+				const y2 = e.clientY - rect.top;
+				this.$selectionRect.style.left = `${Math.min(x1, x2)}px`;
+				this.$selectionRect.style.top = `${Math.min(y1, y2)}px`;
+				this.$selectionRect.style.width = `${Math.abs(x2 - x1)}px`;
+				this.$selectionRect.style.height = `${Math.abs(y2 - y1)}px`;
+				this.$selectionRect.style.display = 'block';
+			},
+			{ capture: true }
+		);
+		this.registerEvent(
+			window,
+			'mouseup',
+			(e: MouseEvent) => {
+				if (!this.selectStart || e.button !== 2) return;
+				e.preventDefault();
+				e.stopPropagation();
+				const start = this.selectStart;
+				this.selectStart = null;
+				const dragDist = Math.abs(e.clientX - start.clientX) + Math.abs(e.clientY - start.clientY);
+				if (dragDist < 5) {
+					// Plain right-click (no drag) clears the selection
+					this.selection = null;
+					this.$selectionRect.style.display = 'none';
+					save(this.bot);
+					return;
+				}
+				const rect = this.$canvas.getBoundingClientRect();
+				const pixelSize = this.position.pixelSize;
+				const p1x = Math.floor((start.clientX - rect.left) / pixelSize);
+				const p1y = Math.floor((start.clientY - rect.top) / pixelSize);
+				const p2x = Math.floor((e.clientX - rect.left) / pixelSize);
+				const p2y = Math.floor((e.clientY - rect.top) / pixelSize);
+				const imgW = this.pixels.pixels[0]!.length;
+				const imgH = this.pixels.pixels.length;
+				const x = Math.max(0, Math.min(p1x, p2x));
+				const y = Math.max(0, Math.min(p1y, p2y));
+				const endX = Math.min(imgW, Math.max(p1x, p2x) + 1);
+				const endY = Math.min(imgH, Math.max(p1y, p2y) + 1);
+				if (endX > x && endY > y) {
+					this.selection = { x, y, width: endX - x, height: endY - y };
+				}
+				this.update();
+				save(this.bot);
+			},
+			{ passive: false, capture: true }
+		);
+		this.registerEvent(
+			window,
+			'contextmenu',
+			(e: MouseEvent) => {
+				const rect = this.$canvas.getBoundingClientRect();
+				if (e.clientX >= rect.left && e.clientX <= rect.right && e.clientY >= rect.top && e.clientY <= rect.bottom) {
+					e.preventDefault();
+					e.stopPropagation();
+				}
+			},
+			{ passive: false, capture: true }
+		);
+
 		// Move
 		this.registerEvent(this.$topbar, 'mousedown', this.moveStart.bind(this));
 		this.registerEvent(this.$canvas, 'mousedown', this.moveStart.bind(this));
-		this.registerEvent(
-			document,
-			'mouseup',
-			function (e) {
-				this.moveStop(e);
-			}.bind(this)
-		);
+		this.registerEvent(document, 'mouseup', () => this.moveStop());
 		this.registerEvent(document, 'mousemove', this.move.bind(this));
 
 		// Resize
@@ -362,6 +450,7 @@ export class BotImage extends Base {
 			colors: this.colors,
 			lock: this.lock,
 			active: this.active,
+			selection: this.selection,
 		};
 	}
 
@@ -382,6 +471,10 @@ export class BotImage extends Base {
 		}
 
 		for (const { x, y } of this.strategyPositionIterator()) {
+			if (this.selection) {
+				const s = this.selection;
+				if (x < s.x || x >= s.x + s.width || y < s.y || y >= s.y + s.height) continue;
+			}
 			const color = this.pixels.pixels[y]![x]!;
 
 			position.globalX = this.position.globalX + x;
@@ -442,6 +535,17 @@ export class BotImage extends Base {
 			this.$topbar.style.display = '';
 			this.$wrapper.style.display = '';
 			this.$canvas.style.display = '';
+		}
+
+		if (this.selection && !this.selectStart) {
+			const pixelSize = this.position.pixelSize;
+			this.$selectionRect.style.left = `${this.selection.x * pixelSize}px`;
+			this.$selectionRect.style.top = `${this.selection.y * pixelSize}px`;
+			this.$selectionRect.style.width = `${this.selection.width * pixelSize}px`;
+			this.$selectionRect.style.height = `${this.selection.height * pixelSize}px`;
+			this.$selectionRect.style.display = 'block';
+		} else if (!this.selectStart) {
+			this.$selectionRect.style.display = 'none';
 		}
 	}
 

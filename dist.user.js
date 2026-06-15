@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         wplace-bot fixed
 // @namespace    https://github.com/Readixyee
-// @version      1.7.2
+// @version      1.7.3
 // @description  Bot to automate painting on website https://wplace.live
 // @author       Readixyee, SoundOfTheSky
 // @license      MPL-2.0
@@ -453,6 +453,7 @@ var image_default = `<div class="wtopbar">
 	<div class="resize e"></div>
 	<div class="resize s"></div>
 	<div class="resize w"></div>
+	<div class="selection-rect"></div>
 </div>
 
 <div class="wform popup">
@@ -948,14 +949,19 @@ class BotImage extends Base2 {
   lock;
   active;
   static async fromJSON(bot, data) {
-    return new BotImage(bot, WorldPosition.fromJSON(bot, data.position), await Pixels.fromJSON(bot, data.pixels), data.strategy, data.opacity, data.drawTransparentPixels, data.drawColorsInOrder, data.colors, data.lock, data.active ?? true);
+    const image = new BotImage(bot, WorldPosition.fromJSON(bot, data.position), await Pixels.fromJSON(bot, data.pixels), data.strategy, data.opacity, data.drawTransparentPixels, data.drawColorsInOrder, data.colors, data.lock, data.active ?? true);
+    image.selection = data.selection ?? null;
+    return image;
   }
   element = document.createElement("div");
   tasks = [];
   progress = [];
   moveInfo;
+  selection = null;
+  selectStart = null;
   $brightness;
   $canvas;
+  $closePopup;
   $colors;
   $delete;
   $drawColorsInOrder;
@@ -963,12 +969,16 @@ class BotImage extends Base2 {
   $drawTransparent;
   $export;
   $lock;
+  $selectionRect;
   $opacity;
+  $popup;
   $progressLine;
   $progressText;
   $resetSize;
   $resetSizeSpan;
+  $resizeNumber;
   $settings;
+  $settingsButton;
   $strategy;
   $topbar;
   $wrapper;
@@ -996,6 +1006,7 @@ class BotImage extends Base2 {
       $drawTransparent: ".draw-transparent",
       $export: ".export",
       $lock: ".lock",
+      $selectionRect: ".selection-rect",
       $settingsButton: ".settings",
       $popup: ".wform.popup",
       $closePopup: ".close-popup",
@@ -1172,11 +1183,72 @@ class BotImage extends Base2 {
     });
     this.registerEvent(this.$delete, "click", this.destroy.bind(this));
     this.registerEvent(this.$export, "click", this.export.bind(this));
+    this.registerEvent(window, "mousedown", (e) => {
+      if (e.button !== 2)
+        return;
+      const rect = this.$canvas.getBoundingClientRect();
+      if (e.clientX < rect.left || e.clientX > rect.right || e.clientY < rect.top || e.clientY > rect.bottom)
+        return;
+      e.preventDefault();
+      e.stopPropagation();
+      this.selectStart = { clientX: e.clientX, clientY: e.clientY };
+    }, { passive: false, capture: true });
+    this.registerEvent(window, "mousemove", (e) => {
+      if (!this.selectStart)
+        return;
+      const rect = this.$canvas.getBoundingClientRect();
+      const x1 = this.selectStart.clientX - rect.left;
+      const y1 = this.selectStart.clientY - rect.top;
+      const x2 = e.clientX - rect.left;
+      const y2 = e.clientY - rect.top;
+      this.$selectionRect.style.left = `${Math.min(x1, x2)}px`;
+      this.$selectionRect.style.top = `${Math.min(y1, y2)}px`;
+      this.$selectionRect.style.width = `${Math.abs(x2 - x1)}px`;
+      this.$selectionRect.style.height = `${Math.abs(y2 - y1)}px`;
+      this.$selectionRect.style.display = "block";
+    }, { capture: true });
+    this.registerEvent(window, "mouseup", (e) => {
+      if (!this.selectStart || e.button !== 2)
+        return;
+      e.preventDefault();
+      e.stopPropagation();
+      const start = this.selectStart;
+      this.selectStart = null;
+      const dragDist = Math.abs(e.clientX - start.clientX) + Math.abs(e.clientY - start.clientY);
+      if (dragDist < 5) {
+        this.selection = null;
+        this.$selectionRect.style.display = "none";
+        save(this.bot);
+        return;
+      }
+      const rect = this.$canvas.getBoundingClientRect();
+      const pixelSize = this.position.pixelSize;
+      const p1x = Math.floor((start.clientX - rect.left) / pixelSize);
+      const p1y = Math.floor((start.clientY - rect.top) / pixelSize);
+      const p2x = Math.floor((e.clientX - rect.left) / pixelSize);
+      const p2y = Math.floor((e.clientY - rect.top) / pixelSize);
+      const imgW = this.pixels.pixels[0].length;
+      const imgH = this.pixels.pixels.length;
+      const x = Math.max(0, Math.min(p1x, p2x));
+      const y = Math.max(0, Math.min(p1y, p2y));
+      const endX = Math.min(imgW, Math.max(p1x, p2x) + 1);
+      const endY = Math.min(imgH, Math.max(p1y, p2y) + 1);
+      if (endX > x && endY > y) {
+        this.selection = { x, y, width: endX - x, height: endY - y };
+      }
+      this.update();
+      save(this.bot);
+    }, { passive: false, capture: true });
+    this.registerEvent(window, "contextmenu", (e) => {
+      const rect = this.$canvas.getBoundingClientRect();
+      if (e.clientX >= rect.left && e.clientX <= rect.right && e.clientY >= rect.top && e.clientY <= rect.bottom) {
+        e.preventDefault();
+        e.stopPropagation();
+      }
+    }, { passive: false, capture: true });
     this.registerEvent(this.$topbar, "mousedown", this.moveStart.bind(this));
     this.registerEvent(this.$canvas, "mousedown", this.moveStart.bind(this));
-    this.registerEvent(document, "mouseup", function(e) {
-      this.moveStop(e);
-    }.bind(this));
+    this.registerEvent(document, "mouseup", () => this.moveStop());
     this.registerEvent(document, "mousemove", this.move.bind(this));
     for (const $resize of this.element.querySelectorAll(".resize"))
       this.registerEvent($resize, "mousedown", this.resizeStart.bind(this));
@@ -1193,7 +1265,8 @@ class BotImage extends Base2 {
       drawColorsInOrder: this.drawColorsInOrder,
       colors: this.colors,
       lock: this.lock,
-      active: this.active
+      active: this.active,
+      selection: this.selection
     };
   }
   updateTasks() {
@@ -1209,6 +1282,11 @@ class BotImage extends Base2 {
       colorsOrderMap.set(drawColor.realColor, index);
     }
     for (const { x, y } of this.strategyPositionIterator()) {
+      if (this.selection) {
+        const s = this.selection;
+        if (x < s.x || x >= s.x + s.width || y < s.y || y >= s.y + s.height)
+          continue;
+      }
       const color = this.pixels.pixels[y][x];
       position.globalX = this.position.globalX + x;
       position.globalY = this.position.globalY + y;
@@ -1258,6 +1336,16 @@ class BotImage extends Base2 {
       this.$topbar.style.display = "";
       this.$wrapper.style.display = "";
       this.$canvas.style.display = "";
+    }
+    if (this.selection && !this.selectStart) {
+      const pixelSize = this.position.pixelSize;
+      this.$selectionRect.style.left = `${this.selection.x * pixelSize}px`;
+      this.$selectionRect.style.top = `${this.selection.y * pixelSize}px`;
+      this.$selectionRect.style.width = `${this.selection.width * pixelSize}px`;
+      this.$selectionRect.style.height = `${this.selection.height * pixelSize}px`;
+      this.$selectionRect.style.display = "block";
+    } else if (!this.selectStart) {
+      this.$selectionRect.style.display = "none";
     }
   }
   destroy() {
@@ -1957,6 +2045,18 @@ var style_default = `/* stylelint-disable declaration-no-important */
 
 .wtopbar button:hover {
 	background-color: var(--main-hover);
+}
+
+/* Selection rect */
+.selection-rect {
+	position: absolute;
+	display: none;
+	border: 2px dashed #fff;
+	background: rgba(102, 187, 180, 0.15);
+	pointer-events: none;
+	box-sizing: border-box;
+	box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.4);
+	z-index: 2;
 }
 
 /* Resize */

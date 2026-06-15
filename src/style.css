@@ -329,6 +329,18 @@
 	background-color: var(--main-hover);
 }
 
+/* Selection rect */
+.selection-rect {
+	position: absolute;
+	display: none;
+	border: 2px dashed #fff;
+	background: rgba(102, 187, 180, 0.15);
+	pointer-events: none;
+	box-sizing: border-box;
+	box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.4);
+	z-index: 2;
+}
+
 /* Resize */
 .resize {
 	position: absolute;
