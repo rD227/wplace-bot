@@ -587,7 +587,6 @@ class Pixels {
   canvas = document.createElement("canvas");
   context = this.canvas.getContext("2d");
   pixels;
-  transparentMask = [];
   colors = new Map;
   resolution;
   get height() {
@@ -629,7 +628,6 @@ class Pixels {
       const cached = await Pixels.loadFromCache(cacheKey);
       if (cached) {
         this.pixels = cached.pixels;
-        this.transparentMask = cached.transparentMask ?? [];
         this.colors.clear();
         for (const [key, value] of Object.entries(cached.colors)) {
           this.colors.set(Number(key), value);
@@ -642,7 +640,6 @@ class Pixels {
     if (!skipCache) {
       const dataToCache = {
         pixels: this.pixels,
-        transparentMask: this.transparentMask,
         colors: Object.fromEntries(this.colors),
         width: this.width,
         brightness: this.brightness,
@@ -653,9 +650,6 @@ class Pixels {
     }
   }
   drawCachedPixels() {
-    if (!this.transparentMask || this.transparentMask.length === 0) {
-      this.transparentMask = Array.from({ length: this.pixels.length }, () => new Array((this.pixels[0] ?? []).length).fill(false));
-    }
     this.canvas.width = this.width;
     this.canvas.height = this.height;
     this.context.imageSmoothingEnabled = false;
@@ -683,7 +677,6 @@ class Pixels {
     this.context.imageSmoothingQuality = "low";
     this.context.drawImage(this.image, 0, 0, this.canvas.width, this.canvas.height);
     this.pixels = Array.from({ length: this.canvas.height }, () => new Array(this.canvas.width));
-    this.transparentMask = Array.from({ length: this.canvas.height }, () => new Array(this.canvas.width).fill(false));
     const data = this.context.getImageData(0, 0, this.canvas.width, this.canvas.height).data;
     const totalPixels = this.canvas.width * this.canvas.height;
     for (let start = 0;start < totalPixels; start += batchSize) {
@@ -700,17 +693,12 @@ class Pixels {
         let min;
         let minReal;
         if (this.exactColor) {
-          if (a < 100) {
-            this.transparentMask[y][x] = true;
-            this.pixels[y][x] = 0;
-          } else
-            this.pixels[y][x] = COLORS_RGB.indexOf(key);
+          this.pixels[y][x] = a < 100 ? 0 : COLORS_RGB.indexOf(key);
           continue;
         }
-        if (a < 100) {
-          this.transparentMask[y][x] = true;
+        if (a < 100)
           min = minReal = 0;
-        } else if (colorCache.has(key))
+        else if (colorCache.has(key))
           [min, minReal] = colorCache.get(key);
         else {
           let minDelta = Infinity;
@@ -1303,8 +1291,7 @@ class BotImage extends Base2 {
       position.globalX = this.position.globalX + x;
       position.globalY = this.position.globalY + y;
       const mapColor = position.getMapColor();
-      const isTransparent = this.pixels.transparentMask?.[y]?.[x] ?? false;
-      if (color !== mapColor && (this.drawTransparentPixels || color !== 0 || color === 0 && !isTransparent)) {
+      if (color !== mapColor && (this.drawTransparentPixels || color !== 0)) {
         const fullTask = {
           position: position.clone(),
           color

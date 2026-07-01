@@ -11,7 +11,6 @@ export type PixelColorStat = {
 
 type CachedPixelData = {
 	pixels: number[][];
-	transparentMask: boolean[][];
 	colors: Record<number, PixelColorStat>;
 	width: number;
 	brightness: number;
@@ -141,9 +140,6 @@ export class Pixels {
 	/** Pixels of image. Use update() after changing variables */
 	public pixels!: number[][];
 
-	/** Mask: true = original pixel was transparent (alpha < 100) */
-	public transparentMask: boolean[][] = [];
-
 	/** Used colors */
 	public readonly colors = new Map<number, PixelColorStat>();
 
@@ -207,7 +203,6 @@ export class Pixels {
 			const cached = await Pixels.loadFromCache(cacheKey);
 			if (cached) {
 				this.pixels = cached.pixels;
-				this.transparentMask = cached.transparentMask ?? [];
 				this.colors.clear();
 				for (const [key, value] of Object.entries(cached.colors)) {
 					this.colors.set(Number(key), value);
@@ -224,7 +219,6 @@ export class Pixels {
 			// Save to cache for next time
 			const dataToCache: CachedPixelData = {
 				pixels: this.pixels,
-				transparentMask: this.transparentMask,
 				colors: Object.fromEntries(this.colors),
 				width: this.width,
 				brightness: this.brightness,
@@ -237,9 +231,6 @@ export class Pixels {
 
 	/** Draw pixels that were loaded from cache */
 	private drawCachedPixels() {
-		if (!this.transparentMask || this.transparentMask.length === 0) {
-			this.transparentMask = Array.from({ length: this.pixels.length }, () => new Array((this.pixels[0] ?? []).length).fill(false));
-		}
 		this.canvas.width = this.width;
 		this.canvas.height = this.height;
 		this.context.imageSmoothingEnabled = false;
@@ -272,7 +263,6 @@ export class Pixels {
 		this.context.drawImage(this.image, 0, 0, this.canvas.width, this.canvas.height);
 
 		this.pixels = Array.from({ length: this.canvas.height }, () => new Array(this.canvas.width) as number[]);
-		this.transparentMask = Array.from({ length: this.canvas.height }, () => new Array(this.canvas.width).fill(false) as boolean[]);
 		const data = this.context.getImageData(0, 0, this.canvas.width, this.canvas.height).data;
 
 		const totalPixels = this.canvas.width * this.canvas.height;
@@ -292,12 +282,11 @@ export class Pixels {
 				let minReal!: number;
 
 				if (this.exactColor) {
-					if (a < 100) { this.transparentMask[y]![x] = true; this.pixels[y]![x] = 0; }
-					else this.pixels[y]![x] = COLORS_RGB.indexOf(key);
+					this.pixels[y]![x] = a < 100 ? 0 : COLORS_RGB.indexOf(key);
 					continue;
 				}
 
-				if (a < 100) { this.transparentMask[y]![x] = true; min = minReal = 0; }
+				if (a < 100) min = minReal = 0;
 				else if (colorCache.has(key)) [min, minReal] = colorCache.get(key)!;
 				else {
 					let minDelta = Infinity;
