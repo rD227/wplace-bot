@@ -1,0 +1,3078 @@
+// ==UserScript==
+// @name         wplace-bot fixed
+// @namespace    https://github.com/Readixyee
+// @version      1.7.3
+// @description  Bot to automate painting on website https://wplace.live
+// @author       Readixyee, SoundOfTheSky
+// @license      MPL-2.0
+// @homepageURL  https://github.com/Readixyee/wplace-bot
+// @updateURL    https://raw.githubusercontent.com/Readixyee/wplace-bot/main/dist.user.js
+// @downloadURL  https://raw.githubusercontent.com/Readixyee/wplace-bot/main/dist.user.js
+// @run-at       document-start
+// @match        *://*.wplace.live/*
+// @grant        none
+// ==/UserScript==
+
+// Forked from: https://github.com/SoundOfTheSky/wplace-bot
+// Wplace  --> https://wplace.live
+// License --> https://www.mozilla.org/en-US/MPL/2.0/
+
+// node_modules/@softsky/utils/dist/arrays.js
+function swap(array, index, index2) {
+  const temporary = array[index2];
+  array[index2] = array[index];
+  array[index] = temporary;
+  return array;
+}
+function removeFromArray(array, value) {
+  const index = array.indexOf(value);
+  if (index !== -1)
+    array.splice(index, 1);
+  return index;
+}
+// node_modules/@softsky/utils/dist/objects.js
+class Base {
+  static lastId = 0;
+  static idMap = new Map;
+  static subclasses = new Map;
+  runOnDestroy = [];
+  _id;
+  get id() {
+    return this._id;
+  }
+  set id(value) {
+    Base.idMap.delete(this._id);
+    Base.idMap.set(value, this);
+    this._id = value;
+  }
+  constructor(id = ++Base.lastId) {
+    this._id = id;
+    Base.idMap.set(id, this);
+  }
+  static registerSubclass() {
+    Base.subclasses.set(this.name, this);
+  }
+  destroy() {
+    Base.idMap.delete(this._id);
+    for (let index = 0;index < this.runOnDestroy.length; index++)
+      this.runOnDestroy[index]();
+  }
+  registerEvent(target, type, listener, options = {}) {
+    options.passive ??= true;
+    target.addEventListener(type, listener, options);
+    this.runOnDestroy.push(() => {
+      target.removeEventListener(type, listener);
+    });
+  }
+}
+
+// node_modules/@softsky/utils/dist/control.js
+var lastIncId = Math.floor(Math.random() * 65536);
+var SESSION_ID = Math.floor(Math.random() * 4503599627370496).toString(16).padStart(13, "0");
+function wait(time) {
+  return new Promise((r) => setTimeout(r, time));
+}
+class SimpleEventSource {
+  handlers = new Map;
+  send(name, data) {
+    return this.handlers.get(name)?.map((handler) => handler(data)) ?? [];
+  }
+  on(name, handler) {
+    let handlers = this.handlers.get(name);
+    if (!handlers) {
+      handlers = [];
+      this.handlers.set(name, handlers);
+    }
+    handlers.push(handler);
+    return () => {
+      removeFromArray(handlers, handler);
+      if (handlers.length === 0)
+        this.handlers.delete(name);
+    };
+  }
+  off(name, handler) {
+    const handlers = this.handlers.get(name);
+    if (!handlers)
+      return;
+    removeFromArray(handlers, handler);
+    if (handlers.length === 0)
+      this.handlers.delete(name);
+  }
+  get source() {
+    return {
+      on: this.on.bind(this),
+      off: this.off.bind(this)
+    };
+  }
+}
+function promisifyEventSource(target, resolveEvents, rejectEvents = ["error"], subName = "addEventListener") {
+  return new Promise((resolve, reject) => {
+    for (let index = 0;index < resolveEvents.length; index++)
+      target[subName]?.(resolveEvents[index], resolve);
+    for (let index = 0;index < rejectEvents.length; index++)
+      target[subName]?.(rejectEvents[index], reject);
+  });
+}
+// node_modules/@softsky/utils/dist/signals.js
+var effectsMap = new WeakMap;
+// node_modules/@softsky/utils/dist/time.js
+class SpeedCalculator {
+  size;
+  historyTime;
+  sum = 0;
+  history = [];
+  statsCached;
+  startTime = Date.now();
+  constructor(size, historyTime = 15000) {
+    this.size = size;
+    this.historyTime = historyTime;
+  }
+  push(chunk) {
+    if (chunk < 0)
+      throw new Error("Negative chunk size");
+    const { time, historyTime } = this.getTime();
+    this.history.push({ time, chunk });
+    if (this.history[0] && this.history[0].time + historyTime < time)
+      this.history.shift();
+    this.sum += chunk;
+    delete this.statsCached;
+  }
+  get stats() {
+    if (!this.statsCached) {
+      const speed = this.history.reduce((sum, entry) => sum + entry.chunk, 0) / this.getTime().historyTime * 1000;
+      this.statsCached = this.size === undefined ? { speed } : {
+        speed,
+        percent: this.sum / this.size,
+        eta: ~~((this.size - this.sum) / speed) * 1000
+      };
+    }
+    return this.statsCached;
+  }
+  getTime() {
+    const time = Date.now();
+    const timeSinceStart = time - this.startTime;
+    const historyTime = Math.min(timeSinceStart, this.historyTime);
+    return { time, historyTime };
+  }
+}
+// src/base.ts
+class Base2 {
+  runOnDestroy = [];
+  destroy() {
+    for (let index = 0;index < this.runOnDestroy.length; index++)
+      this.runOnDestroy[index]();
+  }
+  populateElementsWithSelector(element, selectors) {
+    for (const key in selectors) {
+      this[key] = element.querySelector(selectors[key]);
+    }
+  }
+  registerEvent(target, type, listener, options = {}) {
+    options.passive ??= true;
+    target.addEventListener(type, listener, options);
+    this.runOnDestroy.push(() => {
+      target.removeEventListener(type, listener);
+    });
+  }
+}
+
+// src/colors.ts
+function srgbNonlinearTransformInv(c) {
+  return c > 0.04045 ? ((c + 0.055) / 1.055) ** 2.4 : c / 12.92;
+}
+function rgbToOklab(r, g, b) {
+  const lr = srgbNonlinearTransformInv(r / 255);
+  const lg = srgbNonlinearTransformInv(g / 255);
+  const lb = srgbNonlinearTransformInv(b / 255);
+  const lp = Math.cbrt(0.4122214708 * lr + 0.5363325363 * lg + 0.0514459929 * lb);
+  const mp = Math.cbrt(0.2119034982 * lr + 0.6806995451 * lg + 0.1073969566 * lb);
+  const sp = Math.cbrt(0.0883024619 * lr + 0.2817188376 * lg + 0.6299787005 * lb);
+  const l = 0.2104542553 * lp + 0.793617785 * mp - 0.0040720468 * sp;
+  const aa = 1.9779984951 * lp - 2.428592205 * mp + 0.4505937099 * sp;
+  const bb = 0.0259040371 * lp + 0.7827717662 * mp - 0.808675766 * sp;
+  return [l, aa, bb];
+}
+function deltaE2000(lab1, lab2, brightness) {
+  const [L1, a1, b1] = lab1;
+  const [L2, a2, b2] = lab2;
+  const rad2deg = (rad) => rad * 180 / Math.PI;
+  const deg2rad = (deg) => deg * Math.PI / 180;
+  const kL = 1, kC = 1, kH = 1;
+  const C1 = Math.sqrt(a1 ** 2 + b1 ** 2);
+  const C2 = Math.sqrt(a2 ** 2 + b2 ** 2);
+  const avgC = (C1 + C2) / 2;
+  const G = 0.5 * (1 - Math.sqrt(avgC ** 7 / (avgC ** 7 + 25 ** 7)));
+  const a1p = a1 * (1 + G);
+  const a2p = a2 * (1 + G);
+  const C1p = Math.sqrt(a1p ** 2 + b1 ** 2);
+  const C2p = Math.sqrt(a2p ** 2 + b2 ** 2);
+  const h1p = b1 === 0 && a1p === 0 ? 0 : rad2deg(Math.atan2(b1, a1p)) % 360;
+  const h2p = b2 === 0 && a2p === 0 ? 0 : rad2deg(Math.atan2(b2, a2p)) % 360;
+  const Lp = L2 - L1;
+  const Cp = C2p - C1p;
+  let hp = 0;
+  if (C1p * C2p !== 0) {
+    hp = h2p - h1p;
+    if (hp > 180) {
+      hp -= 360;
+    } else if (hp < -180) {
+      hp += 360;
+    }
+  }
+  const Hp = 2 * Math.sqrt(C1p * C2p) * Math.sin(deg2rad(hp) / 2);
+  const avgLp = (L1 + L2) / 2;
+  const avgCp = (C1p + C2p) / 2;
+  let avghp = (h1p + h2p) / 2;
+  if (Math.abs(h1p - h2p) > 180) {
+    avghp += 180;
+  }
+  const T = 1 - 0.17 * Math.cos(deg2rad(avghp - 30)) + 0.24 * Math.cos(deg2rad(2 * avghp)) + 0.32 * Math.cos(deg2rad(3 * avghp + 6)) - 0.2 * Math.cos(deg2rad(4 * avghp - 63));
+  const SL = 1 + 0.015 * (avgLp - 50) ** 2 / Math.sqrt(20 + (avgLp - 50) ** 2);
+  const SC = 1 + 0.045 * avgCp;
+  const SH = 1 + 0.015 * avgCp * T;
+  const θ = 30 * Math.exp((-((avghp - 275) / 25)) ** 2);
+  const RC = 2 * Math.sqrt(avgCp ** 7 / (avgCp ** 7 + 25 ** 7));
+  const RT = -RC * Math.sin(deg2rad(2 * θ));
+  return Math.sqrt((Lp / (kL * SL)) ** 2 + (Cp / (kC * SC)) ** 2 + (Hp / (kH * SH)) ** 2 + RT * (Cp / (kC * SC)) * (Hp / (kH * SH))) - Lp * brightness;
+}
+var COLORS = [
+  [Number.NaN, Number.NaN, Number.NaN],
+  [0, 0, 0],
+  [0.356, 0, 0],
+  [0.573, 0, 0],
+  [0.864, 0, 0],
+  [1, 0, 0],
+  [0.31, 0.119, 0.037],
+  [0.603, 0.209, 0.107],
+  [0.732, 0.118, 0.137],
+  [0.791, 0.039, 0.16],
+  [0.895, -0.026, 0.168],
+  [0.974, -0.019, 0.077],
+  [0.691, -0.154, 0.075],
+  [0.812, -0.185, 0.096],
+  [0.898, -0.17, 0.149],
+  [0.541, -0.097, 0.005],
+  [0.678, -0.114, -0.018],
+  [0.814, -0.15, 0.011],
+  [0.447, -0.019, -0.134],
+  [0.65, -0.048, -0.137],
+  [0.895, -0.124, -0.027],
+  [0.561, 0.054, -0.229],
+  [0.771, 0, -0.11],
+  [0.431, 0.145, -0.143],
+  [0.557, 0.168, -0.127],
+  [0.796, 0.102, -0.097],
+  [0.551, 0.225, -0.023],
+  [0.62, 0.238, 0],
+  [0.759, 0.127, 0.006],
+  [0.428, 0.036, 0.041],
+  [0.552, 0.03, 0.092],
+  [0.817, 0.055, 0.097],
+  [0.738, 0, 0],
+  [0.46, 0.163, 0.074],
+  [0.735, 0.134, 0.071],
+  [0.642, 0.137, 0.122],
+  [0.794, 0.023, 0.054],
+  [0.62, -0.005, 0.105],
+  [0.747, -0.019, 0.138],
+  [0.864, -0.023, 0.136],
+  [0.489, -0.06, 0.058],
+  [0.609, -0.092, 0.08],
+  [0.76, -0.099, 0.085],
+  [0.54, -0.067, -0.079],
+  [0.941, -0.064, -0.007],
+  [0.803, -0.05, -0.096],
+  [0.438, 0.048, -0.192],
+  [0.421, 0.03, -0.102],
+  [0.593, 0.036, -0.119],
+  [0.781, 0.031, -0.09],
+  [0.757, 0.036, 0.098],
+  [0.676, 0.076, 0.09],
+  [0.868, 0.051, 0.061],
+  [0.524, 0.087, 0.047],
+  [0.684, 0.091, 0.045],
+  [0.835, 0.068, 0.048],
+  [0.519, 0.022, 0.034],
+  [0.629, 0.017, 0.043],
+  [0.342, -0.004, -0.016],
+  [0.564, 0, -0.038],
+  [0.789, 0.003, -0.035],
+  [0.502, -0.006, 0.055],
+  [0.638, -0.005, 0.047],
+  [0.82, -0.007, 0.053]
+];
+var COLORS_RGB = [
+  "NaN",
+  "0,0,0",
+  "60,60,60",
+  "120,120,120",
+  "210,210,210",
+  "255,255,255",
+  "96,0,24",
+  "237,28,36",
+  "255,127,39",
+  "246,170,9",
+  "249,221,59",
+  "255,250,188",
+  "14,185,104",
+  "19,230,123",
+  "135,255,94",
+  "12,129,110",
+  "16,174,166",
+  "19,225,190",
+  "40,80,158",
+  "64,147,228",
+  "96,247,242",
+  "107,80,246",
+  "153,177,251",
+  "120,12,153",
+  "170,56,185",
+  "224,159,249",
+  "203,0,122",
+  "236,31,128",
+  "243,141,169",
+  "104,70,52",
+  "149,104,42",
+  "248,178,119",
+  "170,170,170",
+  "165,14,30",
+  "250,128,114",
+  "228,92,26",
+  "214,181,148",
+  "156,132,49",
+  "197,173,49",
+  "232,212,95",
+  "74,107,58",
+  "90,148,74",
+  "132,197,115",
+  "15,121,159",
+  "187,250,242",
+  "125,199,255",
+  "77,49,184",
+  "74,66,132",
+  "122,113,196",
+  "181,174,241",
+  "219,164,99",
+  "209,128,81",
+  "255,197,165",
+  "155,82,73",
+  "209,128,120",
+  "250,182,164",
+  "123,99,82",
+  "156,132,107",
+  "51,57,65",
+  "109,117,141",
+  "179,185,209",
+  "109,100,63",
+  "148,140,107",
+  "205,197,158"
+];
+function colorToCSS(colorId) {
+  if (colorId === 0)
+    return "transparent";
+  const color = COLORS[colorId];
+  return `oklab(${color[0] * 100}% ${color[1]} ${color[2]})`;
+}
+var COLOR_NAMES = [
+  "Transparent",
+  "Black",
+  "Dark Gray",
+  "Gray",
+  "Light Gray",
+  "White",
+  "Deep Red",
+  "Red",
+  "Orange",
+  "Gold",
+  "Yellow",
+  "Light Yellow",
+  "Dark Green",
+  "Green",
+  "Light Green",
+  "Dark Teal",
+  "Teal",
+  "Light Teal",
+  "Dark Blue",
+  "Blue",
+  "Cyan",
+  "Indigo",
+  "Light Indigo",
+  "Dark Purple",
+  "Purple",
+  "Light Purple",
+  "Dark Pink",
+  "Pink",
+  "Light Pink",
+  "Dark Brown",
+  "Brown",
+  "Beige",
+  "Medium Gray",
+  "Dark Red",
+  "Light Red",
+  "Dark Orange",
+  "Light Tan",
+  "Dark Goldenrod",
+  "Goldenrod",
+  "Light Goldenrod",
+  "Dark Olive",
+  "Olive",
+  "Light Olive",
+  "Dark Cyan",
+  "Light Cyan",
+  "Light Blue",
+  "Dark Indigo",
+  "Dark Slate Blue",
+  "Slate Blue",
+  "Light Slate Blue",
+  "Light Brown",
+  "Dark Beige",
+  "Light Beige",
+  "Dark Peach",
+  "Peach",
+  "Light Peach",
+  "Dark Tan",
+  "Tan",
+  "Dark Slate",
+  "Slate",
+  "Light Slate",
+  "Dark Stone",
+  "Stone",
+  "Light Stone"
+];
+
+// src/image.html
+var image_default = `<div class="wtopbar">
+	<button class="export">📤</button>
+	<button class="lock">🔓</button>
+	<button class="settings">⚙️</button>
+	<button class="delete">❌</button>
+</div>
+
+<div class="wrapper">
+	<div class="resize n"></div>
+	<div class="resize e"></div>
+	<div class="resize s"></div>
+	<div class="resize w"></div>
+	<div class="selection-rect"></div>
+</div>
+
+<div class="wform popup">
+	<div class="popup-header">
+		<span>Settings</span>
+		<button class="close-popup">✖</button>
+	</div>
+
+	<div class="popup-resize n"></div>
+	<div class="popup-resize e"></div>
+	<div class="popup-resize s"></div>
+	<div class="popup-resize w"></div>
+	<div class="popup-resize ne"></div>
+	<div class="popup-resize nw"></div>
+	<div class="popup-resize se"></div>
+	<div class="popup-resize sw"></div>
+
+	<div class="wprogress">
+		<div></div>
+		<span></span>
+	</div>
+	<div class="colors"></div>
+	<label>Opacity:&nbsp;<input class="opacity" type="range" min="0" max="100" /></label>
+	<label>Brightness:&nbsp;<input class="brightness" type="number" step="0.1" /></label>
+	<label>
+		Strategy:&nbsp;<select class="strategy">
+			<option value="RANDOM" selected>Random</option>
+			<option value="DOWN">Down</option>
+			<option value="UP">Up</option>
+			<option value="LEFT">from Left to Right</option>
+			<option value="RIGHT">from Right to Left</option>
+			<option value="SPIRAL_FROM_CENTER">Spiral out</option>
+			<option value="SPIRAL_TO_CENTER">Spiral in</option>
+		</select>
+	</label>
+	<label> Resize to:&nbsp;<input type="number" class="resize-number" min="1" /> </label>
+	<button class="reset-size">Reset size [<span></span>px]</button>
+	<label> <input type="checkbox" class="draw-transparent" />&nbsp;Erase transparent pixels </label>
+	<label> <input type="checkbox" class="draw-colors-in-order" />&nbsp;Draw colors in order </label>
+	<label> <input type="checkbox" class="only-available-colors" />&nbsp;Only available colors </label>
+</div>
+`;
+
+// src/pixels.ts
+class Pixels {
+  bot;
+  image;
+  width;
+  brightness;
+  exactColor;
+  onlyAvailableColors;
+  static db = null;
+  static DB_NAME = "PixelBotCache";
+  static STORE_NAME = "pixelData";
+  static DB_VERSION = 1;
+  static async initDB() {
+    if (this.db)
+      return this.db;
+    return new Promise((resolve, reject) => {
+      const request = indexedDB.open(this.DB_NAME, this.DB_VERSION);
+      request.onerror = () => reject(request.error);
+      request.onsuccess = () => {
+        this.db = request.result;
+        resolve(this.db);
+      };
+      request.onupgradeneeded = (event) => {
+        const db = event.target.result;
+        if (!db.objectStoreNames.contains(this.STORE_NAME)) {
+          db.createObjectStore(this.STORE_NAME, { keyPath: "cacheKey" });
+        }
+      };
+    });
+  }
+  static async hashImage(image) {
+    const canvas = document.createElement("canvas");
+    canvas.width = image.naturalWidth;
+    canvas.height = image.naturalHeight;
+    const ctx = canvas.getContext("2d");
+    ctx.drawImage(image, 0, 0);
+    const dataURL = canvas.toDataURL();
+    let hash = 0;
+    for (let i = 0;i < dataURL.length; i++) {
+      const char = dataURL.charCodeAt(i);
+      hash = (hash << 5) - hash + char;
+      hash = hash & hash;
+    }
+    return `img_${Math.abs(hash)}`;
+  }
+  static async loadFromCache(key) {
+    try {
+      const db = await this.initDB();
+      return new Promise((resolve, reject) => {
+        const transaction = db.transaction([this.STORE_NAME], "readonly");
+        const store = transaction.objectStore(this.STORE_NAME);
+        const request = store.get(JSON.stringify(key));
+        request.onerror = () => reject(request.error);
+        request.onsuccess = () => resolve(request.result || null);
+      });
+    } catch {
+      console.warn("Failed to load from IndexedDB cache, will recompute");
+      return null;
+    }
+  }
+  static async saveToCache(key, data) {
+    try {
+      const db = await this.initDB();
+      return new Promise((resolve, reject) => {
+        const transaction = db.transaction([this.STORE_NAME], "readwrite");
+        const store = transaction.objectStore(this.STORE_NAME);
+        const request = store.put({
+          cacheKey: JSON.stringify(key),
+          ...data
+        });
+        request.onerror = () => reject(request.error);
+        request.onsuccess = () => resolve();
+      });
+    } catch (error) {
+      console.warn("Failed to save to IndexedDB cache:", error);
+    }
+  }
+  static async fromJSON(bot, data, options) {
+    const skipCache = options?.skipCache ?? false;
+    const image = new Image;
+    image.src = data.url.startsWith("http") ? await fetch(data.url, { cache: "no-store" }).then((x) => x.blob()).then((X) => URL.createObjectURL(X)) : data.url;
+    await promisifyEventSource(image, ["load"], ["error"]);
+    let pixels = new Pixels(bot, image, data.width, data.brightness, data.exactColor, data.onlyAvailableColors);
+    await pixels.update(skipCache);
+    return pixels;
+  }
+  _cachedDataURL;
+  canvas = document.createElement("canvas");
+  context = this.canvas.getContext("2d");
+  pixels;
+  colors = new Map;
+  resolution;
+  get height() {
+    return this.width / this.resolution | 0;
+  }
+  set height(value) {
+    this.width = value * this.resolution | 0;
+  }
+  constructor(bot, image, width = image.naturalWidth, brightness = 0, exactColor = false, onlyAvailableColors = false) {
+    this.bot = bot;
+    this.image = image;
+    this.width = width;
+    this.brightness = brightness;
+    this.exactColor = exactColor;
+    this.onlyAvailableColors = onlyAvailableColors;
+    if (exactColor) {
+      this.resolution = 1;
+      this.width = 1000;
+    } else {
+      this.resolution = this.image.naturalWidth / this.image.naturalHeight;
+    }
+  }
+  static async create(bot, image, width = image.naturalWidth, brightness = 0, exactColor = false) {
+    const instance = new Pixels(bot, image, width, brightness, exactColor);
+    await instance.update();
+    return instance;
+  }
+  async update(skipCache = false) {
+    let cacheKey;
+    if (!skipCache) {
+      const imageHash = await Pixels.hashImage(this.image);
+      cacheKey = {
+        imageHash,
+        width: this.width,
+        brightness: this.brightness,
+        exactColor: this.exactColor,
+        onlyAvailableColors: this.onlyAvailableColors
+      };
+      const cached = await Pixels.loadFromCache(cacheKey);
+      if (cached) {
+        this.pixels = cached.pixels;
+        this.colors.clear();
+        for (const [key, value] of Object.entries(cached.colors)) {
+          this.colors.set(Number(key), value);
+        }
+        this.drawCachedPixels();
+        return;
+      }
+    }
+    await this.computePixels();
+    if (!skipCache) {
+      const dataToCache = {
+        pixels: this.pixels,
+        colors: Object.fromEntries(this.colors),
+        width: this.width,
+        brightness: this.brightness,
+        exactColor: this.exactColor,
+        timestamp: Date.now()
+      };
+      await Pixels.saveToCache(cacheKey, dataToCache);
+    }
+  }
+  drawCachedPixels() {
+    this.canvas.width = this.width;
+    this.canvas.height = this.height;
+    this.context.imageSmoothingEnabled = false;
+    this.context.imageSmoothingQuality = "low";
+    for (let y = 0;y < this.pixels.length; y++) {
+      for (let x = 0;x < this.pixels[y].length; x++) {
+        const colorIndex = this.pixels[y][x];
+        if (colorIndex !== 0) {
+          this.context.fillStyle = `oklab(${COLORS[colorIndex][0] * 100}% ${COLORS[colorIndex][1]} ${COLORS[colorIndex][2]})`;
+          this.context.fillRect(x, y, 1, 1);
+        }
+      }
+    }
+  }
+  async computePixels(batchSize = 1000) {
+    this.canvas.width = this.width;
+    this.canvas.height = this.height;
+    this.colors.clear();
+    const colorCache = new Map;
+    for (let index = 1;index < 64; index++) {
+      if (this.exactColor || !this.bot.unavailableColors.has(index) && this.onlyAvailableColors)
+        colorCache.set(COLORS_RGB[index], [index, index]);
+    }
+    this.context.imageSmoothingEnabled = false;
+    this.context.imageSmoothingQuality = "low";
+    this.context.drawImage(this.image, 0, 0, this.canvas.width, this.canvas.height);
+    this.pixels = Array.from({ length: this.canvas.height }, () => new Array(this.canvas.width));
+    const data = this.context.getImageData(0, 0, this.canvas.width, this.canvas.height).data;
+    const totalPixels = this.canvas.width * this.canvas.height;
+    for (let start = 0;start < totalPixels; start += batchSize) {
+      const end = Math.min(start + batchSize, totalPixels);
+      for (let i = start;i < end; i++) {
+        const y = Math.floor(i / this.canvas.width);
+        const x = i % this.canvas.width;
+        const index = i * 4;
+        const r = Math.round(data[index]);
+        const g = Math.round(data[index + 1]);
+        const b = Math.round(data[index + 2]);
+        const a = Math.round(data[index + 3]);
+        const key = `${r},${g},${b}`;
+        let min;
+        let minReal;
+        if (this.exactColor) {
+          this.pixels[y][x] = a < 100 ? 0 : COLORS_RGB.indexOf(key);
+          continue;
+        }
+        if (a < 100)
+          min = minReal = 0;
+        else if (colorCache.has(key))
+          [min, minReal] = colorCache.get(key);
+        else {
+          let minDelta = Infinity;
+          let minDeltaReal = Infinity;
+          for (let colorIndex = 0;colorIndex < COLORS.length; colorIndex++) {
+            const color = COLORS[colorIndex];
+            const delta = deltaE2000(rgbToOklab(r, g, b), color, this.brightness);
+            if (delta < minDelta && (!this.onlyAvailableColors || !this.bot.unavailableColors.has(colorIndex))) {
+              minDelta = delta;
+              min = colorIndex;
+            }
+            if (delta < minDeltaReal) {
+              minDeltaReal = delta;
+              minReal = colorIndex;
+            }
+          }
+          colorCache.set(key, [min, minReal]);
+        }
+        if (min !== 0) {
+          this.context.fillStyle = `oklab(${COLORS[min][0] * 100}% ${COLORS[min][1]} ${COLORS[min][2]})`;
+          this.context.fillRect(x, y, 1, 1);
+        }
+        this.pixels[y][x] = min;
+        const stat = this.colors.get(minReal);
+        if (stat)
+          stat.amount++;
+        else
+          this.colors.set(minReal, { color: min, amount: 1, realColor: minReal });
+      }
+      const percent = Math.floor(end / totalPixels * 100);
+      this.bot.widget.status = `Computing pixels: ${percent}%`;
+      await new Promise((r) => setTimeout(r, 0));
+    }
+  }
+  toJSON() {
+    if (!this._cachedDataURL) {
+      const canvas = document.createElement("canvas");
+      canvas.width = this.image.naturalWidth;
+      canvas.height = this.image.naturalHeight;
+      const context = canvas.getContext("2d");
+      context.drawImage(this.image, 0, 0);
+      this._cachedDataURL = canvas.toDataURL("image/webp", 1);
+    }
+    return {
+      url: this._cachedDataURL,
+      width: this.width,
+      brightness: this.brightness,
+      exactColor: this.exactColor,
+      onlyAvailableColors: this.onlyAvailableColors
+    };
+  }
+  static async clearCache() {
+    try {
+      const db = await Pixels.initDB();
+      return new Promise((resolve, reject) => {
+        const transaction = db.transaction([this.STORE_NAME], "readwrite");
+        const store = transaction.objectStore(this.STORE_NAME);
+        const request = store.clear();
+        request.onerror = () => reject(request.error);
+        request.onsuccess = () => resolve();
+      });
+    } catch (error) {
+      console.warn("Failed to clear cache:", error);
+    }
+  }
+}
+
+// src/save.ts
+var DB_NAME = "wbotDB";
+var STORE_NAME = "botStore";
+function openDB() {
+  return new Promise((resolve, reject) => {
+    const request = indexedDB.open(DB_NAME, 1);
+    request.onupgradeneeded = () => {
+      const db = request.result;
+      if (!db.objectStoreNames.contains(STORE_NAME)) {
+        db.createObjectStore(STORE_NAME);
+      }
+    };
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error);
+  });
+}
+async function save(bot, immediate = false) {
+  const db = await openDB();
+  const tx = db.transaction(STORE_NAME, "readwrite");
+  const store = tx.objectStore(STORE_NAME);
+  const data = JSON.stringify(bot);
+  store.put(data, "wbot");
+  await tx.complete;
+}
+async function loadSave() {
+  const db = await openDB();
+  return new Promise((resolve) => {
+    const tx = db.transaction(STORE_NAME, "readonly");
+    const store = tx.objectStore(STORE_NAME);
+    const request = store.get("wbot");
+    request.onsuccess = () => {
+      try {
+        const save2 = JSON.parse(request.result);
+        resolve(save2);
+      } catch {
+        resolve(undefined);
+      }
+    };
+    request.onerror = () => resolve(undefined);
+  });
+}
+
+// src/world-position.ts
+var WORLD_TILE_SIZE = 1000;
+var WORLD_TILES = 2048;
+var WORLD_PIXEL_SIZE = WORLD_TILE_SIZE * WORLD_TILES;
+var FAVORITE_LOCATIONS_POSITIONS = [];
+var FAVORITE_LOCATIONS = [];
+var lastId = Date.now();
+function addFavoriteLocation(position) {
+  FAVORITE_LOCATIONS_POSITIONS.push(position);
+  FAVORITE_LOCATIONS.push({
+    id: lastId++,
+    latitude: (2 * Math.atan(Math.exp(-(position.y / WORLD_PIXEL_SIZE * (2 * Math.PI) - Math.PI))) - Math.PI / 2) * 180 / Math.PI,
+    longitude: (position.x / WORLD_PIXEL_SIZE * (2 * Math.PI) - Math.PI) * 180 / Math.PI,
+    name: "WBOT_FAVORITE"
+  });
+}
+addFavoriteLocation({
+  x: WORLD_PIXEL_SIZE / 3 | 0,
+  y: WORLD_PIXEL_SIZE / 3 | 0
+});
+addFavoriteLocation({
+  x: WORLD_PIXEL_SIZE / 3 * 2 | 0,
+  y: WORLD_PIXEL_SIZE / 3 * 2 | 0
+});
+function extractScreenPositionFromStar($star) {
+  const [x, y] = $star.style.transform.slice(32, -31).split(", ").map((x2) => Number.parseFloat(x2));
+  return { x, y };
+}
+
+class WorldPosition {
+  bot;
+  static fromJSON(bot, data) {
+    return new WorldPosition(bot, ...data);
+  }
+  static fromScreenPosition(bot, position) {
+    const { anchorScreenPosition, pixelSize, anchorWorldPosition } = bot.findAnchorsForScreen(position);
+    return new WorldPosition(bot, anchorWorldPosition.x + (position.x - anchorScreenPosition.x) / pixelSize | 0, anchorWorldPosition.y + (position.y - anchorScreenPosition.y) / pixelSize | 0);
+  }
+  globalX = 0;
+  globalY = 0;
+  get tileX() {
+    return this.globalX / WORLD_TILE_SIZE | 0;
+  }
+  set tileX(value) {
+    this.globalX = value * WORLD_TILE_SIZE + this.x;
+  }
+  get tileY() {
+    return this.globalY / WORLD_TILE_SIZE | 0;
+  }
+  set tileY(value) {
+    this.globalY = value * WORLD_TILE_SIZE + this.y;
+  }
+  get x() {
+    return this.globalX % WORLD_TILE_SIZE;
+  }
+  set x(value) {
+    this.globalX = this.tileX * WORLD_TILE_SIZE + value;
+  }
+  get y() {
+    return this.globalY % WORLD_TILE_SIZE;
+  }
+  set y(value) {
+    this.globalY = this.tileY * WORLD_TILE_SIZE + value;
+  }
+  anchor1Index;
+  anchor2Index;
+  get pixelSize() {
+    return (extractScreenPositionFromStar(this.bot.$stars[this.anchor2Index]).x - extractScreenPositionFromStar(this.bot.$stars[this.anchor1Index]).x) / (FAVORITE_LOCATIONS_POSITIONS[this.anchor2Index].x - FAVORITE_LOCATIONS_POSITIONS[this.anchor1Index].x);
+  }
+  constructor(bot, tileorGlobalX, tileorGlobalY, x, y) {
+    this.bot = bot;
+    if (x === undefined || y === undefined) {
+      this.globalX = tileorGlobalX;
+      this.globalY = tileorGlobalY;
+    } else {
+      this.globalX = tileorGlobalX * WORLD_TILE_SIZE + x;
+      this.globalY = tileorGlobalY * WORLD_TILE_SIZE + y;
+    }
+    this.updateAnchor();
+  }
+  updateAnchor() {
+    this.anchor1Index = 0;
+    this.anchor2Index = 1;
+    let min1 = Infinity;
+    let min2 = Infinity;
+    for (let index = 0;index < FAVORITE_LOCATIONS_POSITIONS.length; index++) {
+      const { x, y } = FAVORITE_LOCATIONS_POSITIONS[index];
+      if (x < this.globalX && y < this.globalY) {
+        const delta = this.globalX - x + (this.globalY - y);
+        if (delta < min1) {
+          min1 = delta;
+          this.anchor1Index = index;
+        }
+      } else if (x > this.globalX && y > this.globalY) {
+        const delta = x - this.globalX + (y - this.globalY);
+        if (delta < min2) {
+          min2 = delta;
+          this.anchor2Index = index;
+        }
+      }
+    }
+  }
+  toScreenPosition() {
+    const worldPosition = FAVORITE_LOCATIONS_POSITIONS[this.anchor1Index];
+    const screenPosition = extractScreenPositionFromStar(this.bot.$stars[this.anchor1Index]);
+    return {
+      x: (this.globalX - worldPosition.x) * this.pixelSize + screenPosition.x,
+      y: (this.globalY - worldPosition.y) * this.pixelSize + screenPosition.y
+    };
+  }
+  getMapColor() {
+    return this.bot.mapsCache.get(this.tileX + "/" + this.tileY).pixels[this.y][this.x];
+  }
+  scrollScreenTo() {
+    const { x, y } = this.toScreenPosition();
+    this.bot.moveMap({
+      x: x - window.innerWidth / 3,
+      y: y - window.innerHeight / 3
+    });
+  }
+  clone() {
+    return new WorldPosition(this.bot, this.tileX, this.tileY, this.x, this.y);
+  }
+  toJSON() {
+    return [this.globalX, this.globalY];
+  }
+}
+
+// src/image.ts
+class BotImage extends Base2 {
+  bot;
+  position;
+  pixels;
+  strategy;
+  opacity;
+  drawTransparentPixels;
+  drawColorsInOrder;
+  colors;
+  lock;
+  active;
+  static async fromJSON(bot, data) {
+    const image = new BotImage(bot, WorldPosition.fromJSON(bot, data.position), await Pixels.fromJSON(bot, data.pixels), data.strategy, data.opacity, data.drawTransparentPixels, data.drawColorsInOrder, data.colors, data.lock, data.active ?? true);
+    image.selection = data.selection ?? null;
+    return image;
+  }
+  element = document.createElement("div");
+  tasks = [];
+  progress = [];
+  moveInfo;
+  selection = null;
+  selectStart = null;
+  $brightness;
+  $canvas;
+  $closePopup;
+  $colors;
+  $delete;
+  $drawColorsInOrder;
+  $onlyAvailableColors;
+  $drawTransparent;
+  $export;
+  $lock;
+  $selectionRect;
+  $opacity;
+  $popup;
+  $progressLine;
+  $progressText;
+  $resetSize;
+  $resetSizeSpan;
+  $resizeNumber;
+  $settings;
+  $settingsButton;
+  $strategy;
+  $topbar;
+  $wrapper;
+  constructor(bot, position, pixels, strategy = "SPIRAL_FROM_CENTER" /* SPIRAL_FROM_CENTER */, opacity = 50, drawTransparentPixels = false, drawColorsInOrder = false, colors = [], lock = false, active = true) {
+    super();
+    this.bot = bot;
+    this.position = position;
+    this.pixels = pixels;
+    this.strategy = strategy;
+    this.opacity = opacity;
+    this.drawTransparentPixels = drawTransparentPixels;
+    this.drawColorsInOrder = drawColorsInOrder;
+    this.colors = colors;
+    this.lock = lock;
+    this.active = active;
+    this.element.innerHTML = image_default;
+    this.element.classList.add("wimage");
+    document.body.append(this.element);
+    this.populateElementsWithSelector(this.element, {
+      $brightness: ".brightness",
+      $colors: ".colors",
+      $delete: ".delete",
+      $drawColorsInOrder: ".draw-colors-in-order",
+      $onlyAvailableColors: ".only-available-colors",
+      $drawTransparent: ".draw-transparent",
+      $export: ".export",
+      $lock: ".lock",
+      $selectionRect: ".selection-rect",
+      $settingsButton: ".settings",
+      $popup: ".wform.popup",
+      $closePopup: ".close-popup",
+      $opacity: ".opacity",
+      $progressLine: ".wprogress div",
+      $progressText: ".wprogress span",
+      $resetSize: ".reset-size",
+      $resizeNumber: ".resize-number",
+      $settings: ".wform",
+      $strategy: ".strategy",
+      $topbar: ".wtopbar",
+      $wrapper: ".wrapper"
+    });
+    this.$resetSizeSpan = this.$resetSize.querySelector("span");
+    this.$canvas = this.pixels.canvas;
+    this.$wrapper.prepend(this.pixels.canvas);
+    document.body.appendChild(this.$popup);
+    const header = this.$popup.querySelector(".popup-header");
+    let isDragging = false;
+    let offsetX = 0;
+    let offsetY = 0;
+    header.addEventListener("mousedown", (e) => {
+      isDragging = true;
+      const rect = this.$popup.getBoundingClientRect();
+      offsetX = e.clientX - rect.left;
+      offsetY = e.clientY - rect.top;
+    });
+    document.addEventListener("mousemove", (e) => {
+      if (!isDragging)
+        return;
+      const popupRect = this.$popup.getBoundingClientRect();
+      const maxX = window.innerWidth - popupRect.width;
+      const maxY = window.innerHeight - popupRect.height;
+      const newLeft = Math.min(Math.max(0, e.clientX - offsetX), maxX);
+      const newTop = Math.min(Math.max(0, e.clientY - offsetY), maxY);
+      this.$popup.style.top = `${newTop}px`;
+      this.$popup.style.left = `${newLeft}px`;
+      this.$popup.style.transform = "none";
+    });
+    document.addEventListener("mouseup", () => {
+      isDragging = false;
+    });
+    let resizeDir = null;
+    let startX = 0;
+    let startY = 0;
+    let startW = 0;
+    let startH = 0;
+    let startTop = 0;
+    let startLeft = 0;
+    for (const el of this.$popup.querySelectorAll(".popup-resize")) {
+      el.addEventListener("mousedown", (e) => {
+        e.preventDefault();
+        resizeDir = el.classList[1];
+        const rect = this.$popup.getBoundingClientRect();
+        startX = e.clientX;
+        startY = e.clientY;
+        startW = rect.width;
+        startH = rect.height;
+        startTop = rect.top;
+        startLeft = rect.left;
+        document.body.style.userSelect = "none";
+      });
+    }
+    document.addEventListener("mousemove", (e) => {
+      if (!resizeDir)
+        return;
+      let dx = e.clientX - startX;
+      let dy = e.clientY - startY;
+      let newW = startW;
+      let newH = startH;
+      let newTop = startTop;
+      let newLeft = startLeft;
+      const MIN_W = 200;
+      const MIN_H = 150;
+      if (resizeDir.includes("e")) {
+        newW = Math.min(startW + dx, window.innerWidth - startLeft);
+      }
+      if (resizeDir.includes("s")) {
+        newH = Math.min(startH + dy, window.innerHeight - startTop);
+      }
+      if (resizeDir.includes("w")) {
+        const maxDx = startW - MIN_W;
+        const clampedDx = Math.min(Math.max(dx, -startLeft), maxDx);
+        newW = startW - clampedDx;
+        newLeft = startLeft + clampedDx;
+      }
+      if (resizeDir.includes("n")) {
+        const maxDy = startH - MIN_H;
+        const clampedDy = Math.min(Math.max(dy, -startTop), maxDy);
+        newH = startH - clampedDy;
+        newTop = startTop + clampedDy;
+      }
+      this.$popup.style.width = `${Math.max(MIN_W, newW)}px`;
+      this.$popup.style.height = `${Math.max(MIN_H, newH)}px`;
+      this.$popup.style.top = `${newTop}px`;
+      this.$popup.style.left = `${newLeft}px`;
+      this.$popup.style.transform = "none";
+    });
+    document.addEventListener("mouseup", () => {
+      resizeDir = null;
+      document.body.style.userSelect = "";
+    });
+    const closeBtn = this.$popup.querySelector(".close-popup");
+    closeBtn.addEventListener("click", () => {
+      this.$popup.classList.remove("show");
+    });
+    this.registerEvent(this.$strategy, "change", () => {
+      this.strategy = this.$strategy.value;
+      save(this.bot);
+    });
+    this.registerEvent(this.$opacity, "input", () => {
+      this.opacity = this.$opacity.valueAsNumber;
+      this.$opacity.style.setProperty("--val", this.opacity + "%");
+      this.update();
+      save(this.bot);
+    });
+    this.$opacity.style.setProperty("--val", this.opacity + "%");
+    let timeout;
+    this.registerEvent(this.$brightness, "change", () => {
+      clearTimeout(timeout);
+      timeout = setTimeout(() => {
+        this.pixels.brightness = this.$brightness.valueAsNumber;
+        this.pixels.update();
+        this.updateColors();
+        this.update();
+        save(this.bot);
+      }, 1000);
+    });
+    this.registerEvent(this.$resetSize, "click", () => {
+      this.pixels.width = this.pixels.image.naturalWidth;
+      this.pixels.update();
+      this.updateColors();
+      this.update();
+      save(this.bot);
+    });
+    this.registerEvent(this.$resizeNumber, "change", () => {
+      clearTimeout(timeout);
+      timeout = setTimeout(() => {
+        const newSize = Number(this.$resizeNumber.value);
+        if (newSize > 0) {
+          this.pixels.width = newSize;
+          this.pixels.update();
+          this.updateColors();
+          this.update();
+          save(this.bot);
+        }
+      }, 1000);
+    });
+    this.registerEvent(this.$drawTransparent, "click", () => {
+      this.drawTransparentPixels = this.$drawTransparent.checked;
+      save(this.bot);
+    });
+    this.registerEvent(this.$drawColorsInOrder, "click", () => {
+      this.drawColorsInOrder = this.$drawColorsInOrder.checked;
+      save(this.bot);
+    });
+    this.registerEvent(this.$onlyAvailableColors, "click", () => {
+      this.pixels.onlyAvailableColors = this.$onlyAvailableColors.checked;
+      this.pixels.update();
+      this.updateColors();
+      this.update();
+      save(this.bot);
+    });
+    this.registerEvent(this.$lock, "click", () => {
+      this.lock = !this.lock;
+      this.update();
+      save(this.bot);
+    });
+    this.registerEvent(this.$settingsButton, "click", () => {
+      this.$popup.classList.add("show");
+    });
+    this.registerEvent(this.$closePopup, "click", () => {
+      this.$popup.classList.remove("show");
+    });
+    this.registerEvent(this.$delete, "click", this.destroy.bind(this));
+    this.registerEvent(this.$export, "click", this.export.bind(this));
+    this.registerEvent(window, "mousedown", (e) => {
+      if (e.button !== 2)
+        return;
+      const rect = this.$canvas.getBoundingClientRect();
+      if (e.clientX < rect.left || e.clientX > rect.right || e.clientY < rect.top || e.clientY > rect.bottom)
+        return;
+      e.preventDefault();
+      e.stopPropagation();
+      this.selectStart = { clientX: e.clientX, clientY: e.clientY };
+    }, { passive: false, capture: true });
+    this.registerEvent(window, "mousemove", (e) => {
+      if (!this.selectStart)
+        return;
+      const rect = this.$canvas.getBoundingClientRect();
+      const x1 = this.selectStart.clientX - rect.left;
+      const y1 = this.selectStart.clientY - rect.top;
+      const x2 = e.clientX - rect.left;
+      const y2 = e.clientY - rect.top;
+      this.$selectionRect.style.left = `${Math.min(x1, x2)}px`;
+      this.$selectionRect.style.top = `${Math.min(y1, y2)}px`;
+      this.$selectionRect.style.width = `${Math.abs(x2 - x1)}px`;
+      this.$selectionRect.style.height = `${Math.abs(y2 - y1)}px`;
+      this.$selectionRect.style.display = "block";
+    }, { capture: true });
+    this.registerEvent(window, "mouseup", (e) => {
+      if (!this.selectStart || e.button !== 2)
+        return;
+      e.preventDefault();
+      e.stopPropagation();
+      const start = this.selectStart;
+      this.selectStart = null;
+      const dragDist = Math.abs(e.clientX - start.clientX) + Math.abs(e.clientY - start.clientY);
+      if (dragDist < 5) {
+        this.selection = null;
+        this.$selectionRect.style.display = "none";
+        save(this.bot);
+        return;
+      }
+      const rect = this.$canvas.getBoundingClientRect();
+      const pixelSize = this.position.pixelSize;
+      const p1x = Math.floor((start.clientX - rect.left) / pixelSize);
+      const p1y = Math.floor((start.clientY - rect.top) / pixelSize);
+      const p2x = Math.floor((e.clientX - rect.left) / pixelSize);
+      const p2y = Math.floor((e.clientY - rect.top) / pixelSize);
+      const imgW = this.pixels.pixels[0].length;
+      const imgH = this.pixels.pixels.length;
+      const x = Math.max(0, Math.min(p1x, p2x));
+      const y = Math.max(0, Math.min(p1y, p2y));
+      const endX = Math.min(imgW, Math.max(p1x, p2x) + 1);
+      const endY = Math.min(imgH, Math.max(p1y, p2y) + 1);
+      if (endX > x && endY > y) {
+        this.selection = { x, y, width: endX - x, height: endY - y };
+      }
+      this.update();
+      save(this.bot);
+    }, { passive: false, capture: true });
+    this.registerEvent(window, "contextmenu", (e) => {
+      const rect = this.$canvas.getBoundingClientRect();
+      if (e.clientX >= rect.left && e.clientX <= rect.right && e.clientY >= rect.top && e.clientY <= rect.bottom) {
+        e.preventDefault();
+        e.stopPropagation();
+      }
+    }, { passive: false, capture: true });
+    this.registerEvent(this.$topbar, "mousedown", this.moveStart.bind(this));
+    this.registerEvent(this.$canvas, "mousedown", this.moveStart.bind(this));
+    this.registerEvent(document, "mouseup", () => this.moveStop());
+    this.registerEvent(document, "mousemove", this.move.bind(this));
+    for (const $resize of this.element.querySelectorAll(".resize"))
+      this.registerEvent($resize, "mousedown", this.resizeStart.bind(this));
+    this.update();
+    this.updateColors();
+  }
+  toJSON() {
+    return {
+      pixels: this.pixels.toJSON(),
+      position: this.position.toJSON(),
+      strategy: this.strategy,
+      opacity: this.opacity,
+      drawTransparentPixels: this.drawTransparentPixels,
+      drawColorsInOrder: this.drawColorsInOrder,
+      colors: this.colors,
+      lock: this.lock,
+      active: this.active,
+      selection: this.selection
+    };
+  }
+  updateTasks() {
+    this.tasks.length = 0;
+    this.progress.length = 0;
+    const position = this.position.clone();
+    const skipColors = new Set;
+    const colorsOrderMap = new Map;
+    for (let index = 0;index < this.colors.length; index++) {
+      const drawColor = this.colors[index];
+      if (drawColor.disabled)
+        skipColors.add(drawColor.realColor);
+      colorsOrderMap.set(drawColor.realColor, index);
+    }
+    for (const { x, y } of this.strategyPositionIterator()) {
+      if (this.selection) {
+        const s = this.selection;
+        if (x < s.x || x >= s.x + s.width || y < s.y || y >= s.y + s.height)
+          continue;
+      }
+      const color = this.pixels.pixels[y][x];
+      position.globalX = this.position.globalX + x;
+      position.globalY = this.position.globalY + y;
+      const mapColor = position.getMapColor();
+      if (color !== mapColor && (this.drawTransparentPixels || color !== 0)) {
+        const fullTask = {
+          position: position.clone(),
+          color
+        };
+        this.progress.push(fullTask);
+        if (!skipColors.has(color) && !this.bot.unavailableColors.has(color)) {
+          this.tasks.push(fullTask);
+        }
+      }
+    }
+    if (this.drawColorsInOrder) {
+      this.tasks.sort((a, b) => (colorsOrderMap.get(a.color) ?? 0) - (colorsOrderMap.get(b.color) ?? 0));
+    }
+    this.update();
+    this.bot.widget.update();
+  }
+  update() {
+    const { x, y } = this.position.toScreenPosition();
+    this.element.style.transform = `translate(${x}px, ${y}px)`;
+    this.element.style.width = `${this.position.pixelSize * this.pixels.width}px`;
+    this.$canvas.style.opacity = `${this.opacity}%`;
+    this.element.classList.remove("hidden");
+    this.$resetSizeSpan.textContent = this.pixels.width.toString();
+    this.$brightness.valueAsNumber = this.pixels.brightness;
+    this.$strategy.value = this.strategy;
+    this.$opacity.valueAsNumber = this.opacity;
+    this.$drawTransparent.checked = this.drawTransparentPixels;
+    this.$drawColorsInOrder.checked = this.drawColorsInOrder;
+    this.$onlyAvailableColors.checked = this.pixels.onlyAvailableColors;
+    const maxTasks = this.pixels.pixels.length * this.pixels.pixels[0].length;
+    const doneTasks = maxTasks - this.progress.length;
+    const percent = doneTasks / maxTasks * 100 | 0;
+    this.$progressText.textContent = `${doneTasks}/${maxTasks} ${percent}% ETA: ${this.tasks.length / 120 | 0}h`;
+    this.$progressLine.style.transform = `scaleX(${percent}%)`;
+    this.$wrapper.classList[this.lock ? "add" : "remove"]("no-pointer-events");
+    this.$lock.textContent = this.lock ? "\uD83D\uDD12" : "\uD83D\uDD13";
+    if (!this.active) {
+      this.$topbar.style.display = "none";
+      this.$wrapper.style.display = "none";
+      this.$canvas.style.display = "none";
+    } else {
+      this.$topbar.style.display = "";
+      this.$wrapper.style.display = "";
+      this.$canvas.style.display = "";
+    }
+    if (this.selection && !this.selectStart) {
+      const pixelSize = this.position.pixelSize;
+      this.$selectionRect.style.left = `${this.selection.x * pixelSize}px`;
+      this.$selectionRect.style.top = `${this.selection.y * pixelSize}px`;
+      this.$selectionRect.style.width = `${this.selection.width * pixelSize}px`;
+      this.$selectionRect.style.height = `${this.selection.height * pixelSize}px`;
+      this.$selectionRect.style.display = "block";
+    } else if (!this.selectStart) {
+      this.$selectionRect.style.display = "none";
+    }
+  }
+  destroy() {
+    super.destroy();
+    this.element.remove();
+    removeFromArray(this.bot.images, this);
+    this.bot.widget.update();
+    save(this.bot);
+  }
+  updateColors() {
+    this.$colors.innerHTML = "";
+    const pixelsSum = this.pixels.pixels.length * this.pixels.pixels[0].length;
+    if (this.colors.length !== this.pixels.colors.size || this.colors.some((x) => !this.pixels.colors.has(x.realColor))) {
+      this.colors = this.pixels.colors.values().toArray().sort((a, b) => b.amount - a.amount).map((color) => ({
+        realColor: color.realColor,
+        disabled: false
+      }));
+      save(this.bot);
+    }
+    const $utilities = document.createElement("div");
+    $utilities.style.display = "flex";
+    $utilities.style.gap = "8px";
+    $utilities.style.padding = "8px";
+    $utilities.style.borderBottom = "1px solid rgba(0,0,0,0.1)";
+    $utilities.style.flexWrap = "wrap";
+    $utilities.style.justifyContent = "space-between";
+    const createUtilButton = (label, onClick) => {
+      const $btn = document.createElement("button");
+      $btn.textContent = label;
+      $btn.style.padding = "6px 12px";
+      $btn.style.fontSize = "12px";
+      $btn.style.cursor = "pointer";
+      $btn.style.border = "1px solid rgba(0,0,0,0.2)";
+      $btn.style.borderRadius = "4px";
+      $btn.style.background = "rgba(0,0,0,0.05)";
+      $btn.addEventListener("click", onClick);
+      return $btn;
+    };
+    $utilities.append(createUtilButton("First Half", () => {
+      const mid = Math.ceil(this.colors.length / 2);
+      this.colors.forEach((color, i) => {
+        color.disabled = i >= mid ? true : undefined;
+      });
+      this.updateColors();
+      save(this.bot);
+    }));
+    $utilities.append(createUtilButton("Second Half", () => {
+      const mid = Math.ceil(this.colors.length / 2);
+      this.colors.forEach((color, i) => {
+        color.disabled = i < mid ? true : undefined;
+      });
+      this.updateColors();
+      save(this.bot);
+    }));
+    $utilities.append(createUtilButton("Random", () => {
+      this.colors.forEach((color) => {
+        color.disabled = Math.random() > 0.5 ? true : undefined;
+      });
+      this.updateColors();
+      save(this.bot);
+    }));
+    $utilities.append(createUtilButton("Invert", () => {
+      this.colors.forEach((color) => {
+        color.disabled = color.disabled ? undefined : true;
+      });
+      this.updateColors();
+      save(this.bot);
+    }));
+    $utilities.append(createUtilButton("Select All", () => {
+      this.colors.forEach((color) => {
+        color.disabled = undefined;
+      });
+      this.updateColors();
+      save(this.bot);
+    }));
+    $utilities.append(createUtilButton("Deselect All", () => {
+      this.colors.forEach((color) => {
+        color.disabled = true;
+      });
+      this.updateColors();
+      save(this.bot);
+    }));
+    this.$colors.append($utilities);
+    let dragIndex = null;
+    let startY = 0;
+    let startIndex = 0;
+    const rowHeight = 20;
+    for (let index = 0;index < this.colors.length; index++) {
+      const drawColor = this.colors[index];
+      const color = this.pixels.colors.get(drawColor.realColor);
+      const $button = document.createElement("button");
+      $button.style.display = "flex";
+      $button.style.alignItems = "center";
+      const percent = color.amount / pixelsSum * 100;
+      const pixels = color.amount;
+      if (color.realColor === color.color) {
+        $button.style.background = colorToCSS(color.realColor);
+        const css = colorToCSS(color.realColor);
+        const l = parseFloat(css.match(/oklab\((\d+\.?\d*)/)?.[1] ?? "100");
+        if (l < 50)
+          $button.classList.add("color-dark");
+      }
+      $button.setAttribute("data-color", String(drawColor.realColor));
+      if (drawColor.disabled)
+        $button.classList.add("color-disabled");
+      const colorName = COLOR_NAMES[drawColor.realColor] ?? `Color ${drawColor.realColor}`;
+      $button.setAttribute("title", colorName);
+      const $drag = document.createElement("div");
+      $drag.style.flex = "0 0 32px";
+      $drag.style.display = "flex";
+      $drag.style.alignItems = "center";
+      $drag.style.justifyContent = "flex-start";
+      $drag.style.cursor = "grab";
+      $drag.innerHTML = `
+<svg width="30" height="25" viewBox="0 0 24 24" fill="currentColor">
+	<rect x="0" y="6" width="20" height="4" rx="1"/>
+	<rect x="0" y="13" width="20" height="4" rx="1"/>
+</svg>
+`;
+      const $content = document.createElement("div");
+      $content.style.flex = "1";
+      $content.style.display = "flex";
+      $content.style.justifyContent = "flex-end";
+      const info = document.createElement("span");
+      info.textContent = `${percent.toFixed(2)}% (${pixels})`;
+      const isOwned = !this.bot.unavailableColors.has(color.color);
+      if (!isOwned) {
+        const $buy = document.createElement("div");
+        $buy.textContent = "$";
+        $buy.style.marginRight = "4px";
+        $buy.style.padding = "2px 6px";
+        $buy.style.fontSize = "11px";
+        $buy.style.cursor = "pointer";
+        $buy.addEventListener("click", (e) => {
+          e.stopPropagation();
+          document.getElementById("color-" + color.realColor)?.click();
+        });
+        $content.prepend($buy);
+      }
+      $content.append(info);
+      $content.addEventListener("click", () => {
+        drawColor.disabled = drawColor.disabled ? undefined : true;
+        $button.classList.toggle("color-disabled");
+        save(this.bot);
+      });
+      $button.append($drag);
+      $button.append($content);
+      $drag.addEventListener("pointerdown", (e) => {
+        e.preventDefault();
+        $drag.setPointerCapture(e.pointerId);
+        const originalIndex = Array.from(this.$colors.children).indexOf($button);
+        const startY2 = e.clientY;
+        const rect = $button.getBoundingClientRect();
+        const containerRect = this.$colors.getBoundingClientRect();
+        $button.style.position = "fixed";
+        $button.style.top = `${rect.top}px`;
+        $button.style.width = `${rect.width}px`;
+        $button.style.zIndex = "9999";
+        $button.style.opacity = "0.85";
+        $button.style.pointerEvents = "none";
+        const $placeholder = document.createElement("div");
+        $placeholder.style.height = `${rowHeight}px`;
+        $placeholder.style.background = "rgba(0,0,0,0.15)";
+        $placeholder.style.boxSizing = "border-box";
+        $button.after($placeholder);
+        let currentIndex = originalIndex;
+        const onMove = (e2) => {
+          const delta = e2.clientY - startY2;
+          $button.style.top = `${rect.top + delta}px`;
+          const buttons = Array.from(this.$colors.children).filter((el) => el !== $button && el !== $placeholder);
+          let newIndex = buttons.findIndex((btn) => {
+            const r = btn.getBoundingClientRect();
+            return e2.clientY < r.top + r.height / 2;
+          });
+          if (newIndex === -1)
+            newIndex = buttons.length;
+          if (newIndex !== currentIndex) {
+            currentIndex = newIndex;
+            if (newIndex >= buttons.length) {
+              buttons[buttons.length - 1]?.after($placeholder);
+            } else {
+              buttons[newIndex].before($placeholder);
+            }
+          }
+        };
+        const onUp = () => {
+          $button.removeEventListener("pointermove", onMove);
+          $button.style.position = "";
+          $button.style.top = "";
+          $button.style.left = "";
+          $button.style.width = "";
+          $button.style.zIndex = "";
+          $button.style.opacity = "";
+          $button.style.pointerEvents = "";
+          $placeholder.replaceWith($button);
+          const newOrder = Array.from(this.$colors.children).filter((el) => el.hasAttribute("data-color"));
+          this.colors = newOrder.map((el) => {
+            const realColor = el.getAttribute("data-color");
+            return this.colors.find((c) => String(c.realColor) === realColor);
+          });
+          save(this.bot);
+        };
+        $button.addEventListener("pointermove", onMove);
+        $button.addEventListener("pointerup", onUp, { once: true });
+      });
+      this.$colors.append($button);
+    }
+  }
+  *strategyPositionIterator() {
+    const width = this.pixels.pixels[0].length;
+    const height = this.pixels.pixels.length;
+    switch (this.strategy) {
+      case "DOWN" /* DOWN */: {
+        for (let y = 0;y < height; y++)
+          for (let x = 0;x < width; x++)
+            yield { x, y };
+        break;
+      }
+      case "UP" /* UP */: {
+        for (let y = height - 1;y >= 0; y--)
+          for (let x = 0;x < width; x++)
+            yield { x, y };
+        break;
+      }
+      case "LEFT" /* LEFT */: {
+        for (let x = 0;x < width; x++)
+          for (let y = 0;y < height; y++)
+            yield { x, y };
+        break;
+      }
+      case "RIGHT" /* RIGHT */: {
+        for (let x = width - 1;x >= 0; x--)
+          for (let y = 0;y < height; y++)
+            yield { x, y };
+        break;
+      }
+      case "RANDOM" /* RANDOM */: {
+        const positions = [];
+        for (let y = 0;y < height; y++)
+          for (let x = 0;x < width; x++)
+            positions.push({ x, y });
+        for (let index = positions.length - 1;index >= 0; index--) {
+          const index_ = Math.floor(Math.random() * (index + 1));
+          const temporary = positions[index];
+          positions[index] = positions[index_];
+          positions[index_] = temporary;
+        }
+        yield* positions;
+        break;
+      }
+      case "SPIRAL_FROM_CENTER" /* SPIRAL_FROM_CENTER */:
+      case "SPIRAL_TO_CENTER" /* SPIRAL_TO_CENTER */: {
+        const visited = new Set;
+        const total = width * height;
+        let x = Math.floor(width / 2);
+        let y = Math.floor(height / 2);
+        const directories = [
+          [1, 0],
+          [0, 1],
+          [-1, 0],
+          [0, -1]
+        ];
+        let directionIndex = 0;
+        let steps = 1;
+        const inBounds = (x2, y2) => x2 >= 0 && x2 < width && y2 >= 0 && y2 < height;
+        const emit = function* () {
+          let count = 0;
+          while (count < total) {
+            for (let twice = 0;twice < 2; twice++) {
+              for (let index = 0;index < steps; index++) {
+                if (inBounds(x, y)) {
+                  const key = `${x},${y}`;
+                  if (!visited.has(key)) {
+                    visited.add(key);
+                    yield { x, y };
+                    count++;
+                    if (count >= total)
+                      return;
+                  }
+                }
+                x += directories[directionIndex][0];
+                y += directories[directionIndex][1];
+              }
+              directionIndex = (directionIndex + 1) % 4;
+            }
+            steps++;
+          }
+        };
+        if (this.strategy === "SPIRAL_FROM_CENTER" /* SPIRAL_FROM_CENTER */)
+          yield* emit();
+        else {
+          const collected = [...emit()];
+          for (let index = collected.length - 1;index >= 0; index--)
+            yield collected[index];
+        }
+        break;
+      }
+    }
+  }
+  moveStart(event) {
+    if (!this.lock)
+      this.moveInfo = {
+        globalX: this.position.globalX,
+        globalY: this.position.globalY,
+        clientX: event.clientX,
+        clientY: event.clientY
+      };
+  }
+  async moveStop() {
+    if (this.moveInfo) {
+      this.moveInfo = undefined;
+      this.position.updateAnchor();
+      this.updateColors();
+    }
+  }
+  move(event) {
+    if (!this.moveInfo)
+      return;
+    const deltaX = Math.round((event.clientX - this.moveInfo.clientX) / this.position.pixelSize);
+    const deltaY = Math.round((event.clientY - this.moveInfo.clientY) / this.position.pixelSize);
+    if (this.moveInfo.globalX !== undefined) {
+      this.position.globalX = deltaX + this.moveInfo.globalX;
+      if (this.moveInfo.width !== undefined)
+        this.pixels.width = Math.max(1, this.moveInfo.width - deltaX);
+    } else if (this.moveInfo.width !== undefined)
+      this.pixels.width = Math.max(1, deltaX + this.moveInfo.width);
+    if (this.moveInfo.globalY !== undefined) {
+      this.position.globalY = deltaY + this.moveInfo.globalY;
+      if (this.moveInfo.height !== undefined)
+        this.pixels.height = Math.max(1, this.moveInfo.height - deltaY);
+    } else if (this.moveInfo.height !== undefined)
+      this.pixels.height = Math.max(1, deltaY + this.moveInfo.height);
+    this.update();
+    save(this.bot);
+  }
+  resizeStart(event) {
+    this.moveInfo = {
+      clientX: event.clientX,
+      clientY: event.clientY
+    };
+    const $resize = event.target;
+    if ($resize.classList.contains("n")) {
+      this.moveInfo.height = this.pixels.height;
+      this.moveInfo.globalY = this.position.globalY;
+    }
+    if ($resize.classList.contains("e"))
+      this.moveInfo.width = this.pixels.width;
+    if ($resize.classList.contains("s"))
+      this.moveInfo.height = this.pixels.height;
+    if ($resize.classList.contains("w")) {
+      this.moveInfo.width = this.pixels.width;
+      this.moveInfo.globalX = this.position.globalX;
+    }
+  }
+  export() {
+    const a = document.createElement("a");
+    document.body.append(a);
+    a.href = URL.createObjectURL(new Blob([JSON.stringify(this.toJSON())], { type: "application/json" }));
+    a.download = `${this.pixels.width}x${this.pixels.height}.wbot`;
+    a.click();
+    URL.revokeObjectURL(a.href);
+    a.href = this.pixels.canvas.toDataURL("image/webp", 1);
+    a.download = `${this.pixels.width}x${this.pixels.height}.webp`;
+    a.click();
+    URL.revokeObjectURL(a.href);
+    a.remove();
+  }
+}
+
+// src/style.css
+var style_default = `/* stylelint-disable declaration-no-important */
+/* stylelint-disable plugin/no-low-performance-animation-properties */
+/* stylelint-disable no-descending-specificity */
+@import 'https://fonts.googleapis.com/css2?family=Tiny5&display=swap';
+
+:root {
+	--hover: #dfdfdf;
+	--text-invert: #fff;
+	--error: #f00;
+	--resize: 8px;
+	--asdadsasdasdasdasdasdasdasd: 1px;
+	--text: #422e2c;
+	--background: #fbe3cb;
+	--background-hover: #f0d1b3;
+	--background-disabled: #a37648;
+	--main: #66bbb4;
+	--main-hover: #48a19a;
+
+	--text-r: 66;
+	--text-g: 46;
+	--text-b: 44;
+}
+
+.text-yellow-400.cursor-pointer.z-10.maplibregl-marker.maplibregl-marker-anchor-center:nth-child(
+		-n + FAKE_FAVORITE_LOCATIONS
+	) {
+	display: none;
+}
+
+/** Widget */
+.wwidget {
+	position: fixed;
+	top: 0;
+	left: 0;
+	z-index: 1000;
+	display: flex;
+	flex-direction: column;
+	width: 256px;
+	height: 100dvh;
+	border-right: var(--text) 2px solid;
+	background-color: var(--background);
+	color: var(--text);
+	font-family: 'Tiny5', sans-serif;
+	transition: transform 0.5s;
+	transform: translateX(-100%);
+}
+
+.wwidget .title {
+	flex-shrink: 0;
+	border-bottom: var(--text) 2px solid;
+	background-color: var(--main);
+	font-size: 32px;
+	text-align: center;
+	cursor: text;
+	user-select: none;
+}
+
+.wwidget .title input {
+	width: 100%;
+	background: transparent;
+	border: none;
+	outline: none;
+	text-align: center;
+	font: inherit;
+	color: inherit;
+	cursor: text;
+}
+
+.wwidget > .wform {
+	display: flex;
+	flex-direction: column;
+	flex: 1;
+	overflow: hidden;
+	min-height: 0;
+}
+
+.wwidget.wopen .wopen-button div {
+	transform: rotate(180deg);
+}
+
+.wwidget.wopen {
+	box-shadow: 8px 0 16px -8px var(--main);
+	transform: translateX(0);
+}
+
+.wwidget .wopen-button div {
+	transition: transform 0.5s;
+}
+
+.wwidget .wopen-button {
+	position: absolute;
+	top: calc(50% - 24px);
+	right: -24px;
+	width: 24px;
+	height: 48px;
+	border: var(--text) 2px solid;
+	border-left: none;
+	background-color: var(--background);
+	color: var(--text);
+	cursor: pointer;
+}
+
+.wwidget .images {
+	display: block;
+	flex: 0 1 auto;
+	overflow-x: hidden;
+	overflow-y: auto;
+	min-height: 0;
+}
+
+.wwidget .images .image {
+	display: flex;
+	align-items: center;
+	width: 100%;
+	height: 64px;
+}
+
+.wwidget .images .image img {
+	max-width: 100%;
+	max-height: 100%;
+	margin: 0 auto;
+	cursor: pointer;
+}
+
+.wwidget .images .image button {
+	width: 32px;
+	height: 64px;
+	font-weight: bolder;
+	font-size: 24px;
+}
+
+/** Image */
+.wimage {
+	position: fixed;
+	top: 0;
+	left: 0;
+	z-index: 9;
+}
+
+.wimage canvas {
+	width: 100%;
+	box-shadow: inset var(--text) 0 0 0 2px;
+	cursor: all-scroll;
+	image-rendering: pixelated;
+}
+
+.wimage .wform {
+	position: absolute;
+	display: none;
+	width: 100%;
+	min-width: 256px;
+	border: var(--text) 2px solid;
+	background-color: var(--background);
+	color: var(--text);
+}
+
+.wimage:hover .wrapper .wform {
+	display: block;
+}
+
+/* Settings */
+.wform {
+	font-family: 'Tiny5', sans-serif;
+}
+
+.wform > * {
+	display: flex;
+	justify-content: center;
+	align-items: center;
+	overflow: hidden;
+	width: calc(100% - 8px);
+	margin: 4px;
+	text-align: center;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.wform button,
+.wform input,
+.wform select,
+.wform textarea,
+.wform label:has(input[type='checkbox']) {
+	padding: 0 8px;
+	border: var(--text) 2px solid;
+	cursor: pointer;
+	transition: background-color 0.2s;
+}
+
+.wform input[type='range'] {
+	width: 100%;
+	height: 32px;
+	background: linear-gradient(to right, var(--main) var(--val), var(--background-disabled) var(--val));
+	cursor: ew-resize;
+	appearance: none;
+}
+
+.wform input[type='range']::-moz-range-thumb {
+	width: 0;
+	height: 0;
+	opacity: 0;
+}
+
+.wform button:hover,
+.wform input:hover {
+	background-color: var(--background-hover);
+}
+
+.wform button:disabled,
+.wform input:disabled {
+	background-color: var(--background-disabled);
+	cursor: no-drop;
+}
+
+.wform label input:not([type='checkbox']) {
+	width: inherit;
+}
+
+.wform .wprogress {
+	position: relative;
+	width: 100%;
+	margin: 0;
+}
+
+.wform .wprogress div {
+	position: absolute;
+	width: 100%;
+	height: 100%;
+	background-color: var(--main);
+	transform-origin: left;
+}
+
+.wform .wprogress span {
+	z-index: 0;
+}
+
+.wform .colors {
+	display: block;
+	overflow-y: auto;
+	min-height: 200px;
+	touch-action: pan-y;
+}
+
+.wform .colors > button {
+	position: relative;
+	width: 100%;
+	display: flex;
+	border: none;
+	align-items: center;
+	justify-content: end;
+	padding: 0;
+	padding-right: 2px;
+	padding-left: 2px;
+}
+
+.wform .colors > button:hover {
+	filter: brightness(0.6);
+}
+
+.wform .colors > button.color-dark {
+	color: var(--text-invert);
+}
+
+.wform .colors > button.color-dark svg {
+	fill: var(--text-invert);
+}
+
+.wform .colors > button.color-disabled {
+	cursor: no-drop;
+	border: 2px solid red;
+}
+
+.wform .colors > button.substitution button {
+	position: absolute;
+	top: 0;
+	left: 0;
+	width: 100%;
+	height: 100%;
+	padding: 0 4px;
+	color: var(--background);
+	transition: 0.2s filter;
+}
+
+.wform .colors > button.substitution button:hover {
+	filter: brightness(0.6);
+}
+
+.wform .colors > button.substitution button:first-child {
+	background: var(--wreal-color);
+	text-align: left;
+	clip-path: polygon(0 0, 80% 0, 20% 100%, 0 100%);
+}
+
+.wform .colors > button.substitution button:last-child {
+	background: var(--wsubstitution-color);
+	text-align: right;
+	clip-path: polygon(100% 100%, 100% 0, 80% 0, 20% 100%);
+}
+
+.wform .colors > button.substitution:hover {
+	filter: none;
+}
+
+/* Move */
+.wtopbar {
+	position: absolute;
+	top: -24px;
+	left: 0;
+	display: flex;
+	justify-content: end;
+	align-items: center;
+	width: 100%;
+	min-width: min-content;
+	min-width: 256px;
+	border: var(--text) 2px solid;
+	background-color: var(--main);
+	color: var(--text-invert);
+	cursor: all-scroll;
+}
+
+.wtopbar button {
+	display: flex;
+	justify-content: center;
+	align-items: center;
+	width: 24px;
+	height: 24px;
+}
+
+.wtopbar button:hover {
+	background-color: var(--main-hover);
+}
+
+/* Selection rect */
+.selection-rect {
+	position: absolute;
+	display: none;
+	border: 2px dashed #fff;
+	background: rgba(102, 187, 180, 0.15);
+	pointer-events: none;
+	box-sizing: border-box;
+	box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.4);
+	z-index: 2;
+}
+
+/* Resize */
+.resize {
+	position: absolute;
+	width: calc(100% - var(--resize) - var(--resize));
+	height: calc(100% - var(--resize) - var(--resize));
+}
+
+.resize.n {
+	top: 0;
+	left: var(--resize);
+	height: var(--resize);
+	cursor: n-resize;
+}
+
+.resize.e {
+	top: var(--resize);
+	right: 0;
+	width: var(--resize);
+	cursor: e-resize;
+}
+
+.resize.s {
+	bottom: 0;
+	left: var(--resize);
+	height: var(--resize);
+	cursor: s-resize;
+}
+
+.resize.w {
+	top: var(--resize);
+	left: 0;
+	width: var(--resize);
+	cursor: w-resize;
+}
+
+/* Utility */
+.wp {
+	padding: 0 8px;
+}
+
+.hidden {
+	display: none;
+}
+
+.no-pointer-events {
+	height: 1px;
+	pointer-events: none;
+}
+
+.custom-dialog {
+	position: fixed;
+	top: 50%;
+	left: 50%;
+	transform: translate(-50%, -50%);
+	border: var(--text) 2px solid;
+	background: var(--background);
+	color: var(--text);
+	font-family: 'Tiny5', sans-serif;
+	padding: 16px;
+	min-width: 220px;
+}
+
+.custom-dialog::backdrop {
+	background: rgba(0, 0, 0, 0.45);
+}
+
+.custom-dialog form {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+}
+
+.custom-dialog label {
+	display: flex;
+	justify-content: space-between;
+	align-items: center;
+}
+
+.custom-dialog input[type='number'] {
+	width: 100px;
+	padding: 4px 6px;
+	border: var(--text) 2px solid;
+	background: var(--background);
+	color: var(--text);
+	font-family: 'Tiny5', sans-serif;
+}
+
+.custom-dialog button {
+	padding: 4px 8px;
+	border: var(--text) 2px solid;
+	background: var(--main);
+	color: var(--text-invert);
+	font-family: 'Tiny5', sans-serif;
+	cursor: pointer;
+}
+
+.custom-dialog button:hover {
+	background: var(--main-hover);
+}
+.wform.popup {
+	position: fixed;
+	top: 50%;
+	left: 50%;
+	transform: translate(-50%, -50%);
+	border: 2px solid #ccc;
+	box-shadow: 0 0 15px rgba(0, 0, 0, 0.3);
+	display: none;
+	z-index: 10;
+	background-color: var(--background);
+	border: var(--text) 2px solid;
+	color: var(--text);
+	font-family: 'Tiny5', sans-serif;
+	box-shadow: 0 0 15px rgba(0, 0, 0, 0.4);
+	min-width: 350px;
+}
+
+.wform.popup.show {
+	display: grid;
+	grid-template-rows: auto auto 1fr auto;
+	min-width: 540px;
+	min-height: 600px;
+	width: 540px;
+	height: 600px;
+}
+
+.wform.popup .popup-header {
+	width: 100%;
+	display: flex;
+	justify-content: space-between;
+	align-items: center;
+	cursor: move;
+	padding: 4px;
+	margin: 0;
+	margin-bottom: 8px;
+	background-color: var(--main);
+	color: var(--text-invert);
+	user-select: none;
+}
+
+.wform.popup .close-popup {
+	border: none;
+	background: #f00;
+	color: #fff;
+	width: 24px;
+	height: 24px;
+	cursor: pointer;
+	font-size: 16px;
+	line-height: 24px;
+	display: flex;
+	justify-content: center;
+}
+
+.wform.popup .close-popup:hover {
+	background: #c00;
+}
+.image.inactive {
+	opacity: 0.4;
+	filter: grayscale(1);
+}
+
+.wwidget .images .image .toggle {
+	width: 48px;
+	height: 28px;
+	margin-left: 4px;
+	border: 2px solid var(--text);
+	border-radius: 4px;
+	background-color: var(--main);
+	color: var(--text-invert);
+	font-size: 14px;
+	font-weight: bold;
+	transition:
+		background-color 0.2s,
+		color 0.2s,
+		transform 0.1s;
+	cursor: pointer;
+}
+
+.wwidget .images .image .toggle:hover {
+	background-color: var(--main-hover);
+}
+
+.wwidget .images .image.inactive .toggle {
+	background-color: var(--background-disabled);
+	color: var(--text);
+	cursor: not-allowed;
+}
+
+.wwidget .images .image .toggle:active {
+	transform: scale(0.95);
+}
+
+.popup-resize {
+	position: absolute;
+	z-index: 10;
+}
+
+.popup-resize.n {
+	top: 0;
+	left: 0;
+	right: 0;
+	height: 6px;
+	cursor: n-resize;
+	margin: 0;
+}
+.popup-resize.s {
+	bottom: 0;
+	left: 0;
+	right: 0;
+	height: 6px;
+	cursor: s-resize;
+	margin: 0;
+}
+.popup-resize.e {
+	top: 0;
+	right: 0;
+	bottom: 0;
+	width: 6px;
+	cursor: e-resize;
+	margin: 0;
+}
+.popup-resize.w {
+	top: 0;
+	left: 0;
+	bottom: 0;
+	width: 6px;
+	cursor: w-resize;
+	margin: 0;
+}
+
+.popup-resize.ne {
+	top: 0;
+	right: 0;
+	width: 10px;
+	height: 10px;
+	cursor: ne-resize;
+	margin: 0;
+}
+.popup-resize.nw {
+	top: 0;
+	left: 0;
+	width: 10px;
+	height: 10px;
+	cursor: nw-resize;
+	margin: 0;
+}
+.popup-resize.se {
+	bottom: 0;
+	right: 0;
+	width: 10px;
+	height: 10px;
+	cursor: se-resize;
+	margin: 0;
+}
+.popup-resize.sw {
+	bottom: 0;
+	left: 0;
+	width: 10px;
+	height: 10px;
+	cursor: sw-resize;
+	margin: 0;
+}
+
+.auto-draw-label { display: flex; align-items: center; gap: 6px; font-size: 13px; cursor: pointer; margin-top: 4px; }
+.auto-draw-label input { margin: 0; }
+`;
+
+// src/errors.ts
+class WPlaceBotError extends Error {
+  name = "WPlaceBotError";
+  constructor(message, bot) {
+    super(message);
+    bot.widget.status = message;
+  }
+}
+class NoImageError extends WPlaceBotError {
+  name = "NoImageError";
+  constructor(bot) {
+    super("❌ No image is selected", bot);
+  }
+}
+
+// src/widget.html
+var widget_default = `<button class="wopen-button"><div>></div></button>
+<div class="title">WPlace-bot</div>
+<div class="wform">
+	<div class="wprogress">
+		<div></div>
+		<span></span>
+	</div>
+	<div class="wp wstatus"></div>
+	<button class="draw" disabled>Draw</button>
+<label class="auto-draw-label"><input type="checkbox" class="auto-draw"> Auto draw</label>
+	<label
+		>Strategy:&nbsp;<select class="strategy">
+			<option value="SEQUENTIAL" selected>Sequential</option>
+			<option value="ALL">All</option>
+			<option value="PERCENTAGE">Percentage</option>
+		</select></label
+	>
+	<div class="images"></div>
+	<!-- <button class="pumpkin-hunt" disabled>Pumpkin Hunt!</button> -->
+	<button class="add-image" disabled>Add image</button>
+</div>
+`;
+
+// src/widget.ts
+class Widget extends Base2 {
+  bot;
+  element = document.createElement("div");
+  get status() {
+    return this.$status.innerHTML;
+  }
+  set status(value) {
+    this.$status.innerHTML = value;
+  }
+  get open() {
+    return this.element.classList.contains("wopen");
+  }
+  set open(value) {
+    if (value)
+      this.element.classList.add("wopen");
+    else
+      this.element.classList.remove("wopen");
+  }
+  $title;
+  $settings;
+  $status;
+  $minimize;
+  $topbar;
+  $draw;
+  $addImage;
+  $strategy;
+  $progressLine;
+  $progressText;
+  $images;
+  $wopenButton;
+  $autoDraw;
+  constructor(bot) {
+    super();
+    this.bot = bot;
+    this.element.classList.add("wwidget");
+    this.element.innerHTML = widget_default;
+    document.body.append(this.element);
+    this.populateElementsWithSelector(this.element, {
+      $wopenButton: ".wopen-button",
+      $title: ".title",
+      $settings: ".wform",
+      $status: ".wstatus",
+      $minimize: ".minimize",
+      $topbar: ".wtopbar",
+      $draw: ".draw",
+      $addImage: ".add-image",
+      $strategy: ".strategy",
+      $progressLine: ".wprogress div",
+      $progressText: ".wprogress span",
+      $images: ".images",
+      $autoDraw: ".auto-draw"
+    });
+    this.$wopenButton.addEventListener("click", () => this.open = !this.open);
+    this.$draw.addEventListener("click", () => this.bot.draw());
+    this.$autoDraw.addEventListener("change", () => this.bot.toggleAutoDraw(this.$autoDraw.checked));
+    this.$addImage.addEventListener("click", () => this.addImage());
+    this.$strategy.addEventListener("change", () => {
+      this.bot.strategy = this.$strategy.value;
+    });
+    this.setupTitleEditing();
+    this.update();
+    this.open = true;
+  }
+  addImage() {
+    this.setDisabled("add-image", true);
+    return this.run("Adding image", async () => {
+      await this.bot.updateColors();
+      const input = document.createElement("input");
+      input.type = "file";
+      input.accept = "image/*,.wbot";
+      input.click();
+      await promisifyEventSource(input, ["change"], ["cancel", "error"]);
+      const file = input.files?.[0];
+      if (!file)
+        throw new NoImageError(this.bot);
+      let botImage;
+      if (file.name.endsWith(".wbot")) {
+        botImage = await BotImage.fromJSON(this.bot, JSON.parse(await file.text()));
+      } else {
+        const reader = new FileReader;
+        reader.readAsDataURL(file);
+        await promisifyEventSource(reader, ["load"], ["error"]);
+        const image = new Image;
+        image.src = reader.result;
+        await promisifyEventSource(image, ["load"], ["error"]);
+        const width = await new Promise((resolve, reject) => {
+          const dialog = document.createElement("dialog");
+          const form = document.createElement("form");
+          const label = document.createElement("label");
+          const number = document.createElement("input");
+          const ok = document.createElement("button");
+          dialog.classList.add("custom-dialog");
+          form.method = "dialog";
+          label.textContent = "Width: ";
+          number.type = "number";
+          number.value = String(image.width);
+          number.min = "1";
+          ok.textContent = "OK";
+          ok.value = "ok";
+          label.appendChild(number);
+          form.appendChild(label);
+          form.appendChild(ok);
+          dialog.appendChild(form);
+          document.body.appendChild(dialog);
+          dialog.addEventListener("close", () => {
+            const value = dialog.returnValue === "ok" ? Number(number.value) : image.width;
+            dialog.remove();
+            resolve(value);
+          });
+          dialog.showModal();
+        });
+        botImage = new BotImage(this.bot, WorldPosition.fromScreenPosition(this.bot, {
+          x: 256,
+          y: 32
+        }), await Pixels.create(this.bot, image, width));
+      }
+      this.bot.images.push(botImage);
+      await this.bot.readMap();
+      botImage.updateTasks();
+      await save(this.bot, true);
+    }, () => {
+      this.setDisabled("add-image", false);
+    });
+  }
+  update() {
+    if (!this.$title.querySelector("input"))
+      this.$title.textContent = this.bot.name;
+    this.$strategy.value = this.bot.strategy;
+    let maxTasks = 0;
+    let totalTasks = 0;
+    for (let index = 0;index < this.bot.images.length; index++) {
+      const image = this.bot.images[index];
+      maxTasks += image.pixels.pixels.length * image.pixels.pixels[0].length;
+      totalTasks += image.progress.length;
+    }
+    const doneTasks = maxTasks - totalTasks;
+    const percent = doneTasks / maxTasks * 100 | 0;
+    this.$progressText.textContent = `${doneTasks}/${maxTasks} ${percent}% ETA: ${totalTasks / 120 | 0}h`;
+    this.$progressLine.style.transform = `scaleX(${percent}%)`;
+    this.$images.innerHTML = "";
+    for (let index = 0;index < this.bot.images.length; index++) {
+      const image = this.bot.images[index];
+      const $image = document.createElement("div");
+      this.$images.append($image);
+      $image.className = "image";
+      if (!image.active)
+        $image.classList.add("inactive");
+      $image.innerHTML = `<img src="${image.pixels.image.src}">
+    <button class="toggle">${image.active ? "ON" : "OFF"}</button>
+  <button class="up" title="Move up" ${index === 0 ? "disabled" : ""}>▴</button>
+  <button class="down" title="Move down" ${index === this.bot.images.length - 1 ? "disabled" : ""}>▾</button>`;
+      $image.querySelector("img").addEventListener("click", () => {
+        image.position.scrollScreenTo();
+      });
+      $image.querySelector(".up").addEventListener("click", () => {
+        swap(this.bot.images, index, index - 1);
+        this.update();
+        save(this.bot);
+      });
+      $image.querySelector(".down").addEventListener("click", () => {
+        swap(this.bot.images, index, index + 1);
+        this.update();
+        save(this.bot);
+      });
+      $image.querySelector(".toggle").addEventListener("click", () => {
+        image.active = !image.active;
+        $image.classList.toggle("inactive", !image.active);
+        this.update();
+        image.update();
+        save(this.bot);
+      });
+      $image.querySelector(".toggle").textContent = image.active ? "ON" : "OFF";
+    }
+  }
+  setupTitleEditing() {
+    this.$title.addEventListener("click", () => {
+      if (this.$title.querySelector("input"))
+        return;
+      const input = document.createElement("input");
+      input.value = this.bot.name;
+      this.$title.textContent = "";
+      this.$title.append(input);
+      input.select();
+      const commit = () => {
+        const newName = input.value.trim() || "WPlace-bot";
+        this.bot.name = newName;
+        this.$title.textContent = newName;
+        save(this.bot);
+      };
+      const cancel = () => {
+        this.$title.textContent = this.bot.name;
+      };
+      input.addEventListener("keydown", (e) => {
+        if (e.key === "Enter") {
+          e.preventDefault();
+          input.blur();
+        }
+        if (e.key === "Escape") {
+          input.removeEventListener("blur", commit);
+          cancel();
+        }
+      });
+      input.addEventListener("blur", commit);
+      input.focus();
+    });
+  }
+  setDisabled(name, disabled) {
+    this.element.querySelector("." + name).disabled = disabled;
+  }
+  async run(status, run, fin, emoji = "⌛") {
+    const originalStatus = this.status;
+    this.status = `${emoji} ${status}`;
+    try {
+      const result = await run();
+      this.status = originalStatus;
+      return result;
+    } catch (error) {
+      if (!(error instanceof WPlaceBotError)) {
+        console.error(error);
+        this.status = `❌ ${status}`;
+      }
+      throw error;
+    } finally {
+      await fin?.();
+    }
+  }
+  minimize() {
+    this.$settings.classList.toggle("hidden");
+  }
+}
+
+// src/bot.ts
+var SAVE_VERSION = 2;
+
+class WPlaceBot {
+  unavailableColors = new Set;
+  mapsCache = new Map;
+  me;
+  $stars = [];
+  strategy = "SEQUENTIAL" /* SEQUENTIAL */;
+  name = "WPlace-bot";
+  images = [];
+  widget = new Widget(this);
+  autoDraw = false;
+  _autoDrawTimer = null;
+  markerPixelPositionResolvers = [];
+  lastColor;
+  constructor() {
+    this.registerFetchInterceptor();
+    this.bootstrap();
+  }
+  async bootstrap() {
+    const save2 = await loadSave();
+    if (save2) {
+      for (let index = 0;index < save2.images.length; index++) {
+        const image = save2.images[index];
+        addFavoriteLocation({
+          x: image.position[0] - 1000,
+          y: image.position[1] - 1000
+        });
+        addFavoriteLocation({
+          x: image.position[0] + 1000,
+          y: image.position[1] + 1000
+        });
+      }
+      this.strategy = save2.strategy;
+      this.name = save2.name ?? "WPlace-bot";
+    }
+    const style = document.createElement("style");
+    style.textContent = style_default.replace("FAKE_FAVORITE_LOCATIONS", FAVORITE_LOCATIONS.length.toString());
+    document.head.append(style);
+    this.widget.run("Initializing", async () => {
+      await this.waitForElement("login", ".avatar.center-absolute.absolute");
+      await this.waitForElement("pixel count", ".btn.btn-primary.btn-lg.relative.z-30 canvas");
+      await this.waitForElement("favorite stars", ".text-yellow-400.cursor-pointer.z-10.maplibregl-marker.maplibregl-marker-anchor-center");
+      const $canvasContainer = await this.waitForElement("canvas", ".maplibregl-canvas-container");
+      new MutationObserver((mutations) => {
+        for (let index = 0;index < mutations.length; index++)
+          if (mutations[index].removedNodes.length !== 0) {
+            this.updateStars();
+            break;
+          }
+        this.updateImages();
+      }).observe($canvasContainer, {
+        attributes: true,
+        childList: true,
+        subtree: true
+      });
+      this.updateStars();
+      await wait(500);
+      await this.updateColors();
+      if (save2)
+        for (let index = 0;index < save2.images.length; index++) {
+          const image = await BotImage.fromJSON(this, save2.images[index]);
+          this.images.push(image);
+          image.update();
+        }
+      await this.readMap();
+      this.updateTasks();
+      this.widget.setDisabled("draw", false);
+      this.widget.setDisabled("add-image", false);
+      this.widget.update();
+    });
+  }
+  draw() {
+    this.widget.setDisabled("draw", true);
+    this.widget.status = "";
+    const $canvas = document.querySelector(".maplibregl-canvas");
+    const prevent = (event) => {
+      if (!event.shiftKey)
+        event.stopPropagation();
+    };
+    return this.widget.run("Drawing", async () => {
+      await this.widget.run("Initializing draw", () => Promise.all([this.updateColors(), this.readMap()]));
+      this.updateTasks();
+      const canvas = document.querySelector(".maplibregl-canvas");
+      const firstTask = this.images[0].tasks[0];
+      if (firstTask) {
+        let waitForZoom = function(minPixelSize) {
+          return new Promise((resolve) => {
+            function step() {
+              if (firstTask.position.pixelSize >= minPixelSize) {
+                resolve();
+                return;
+              }
+              canvas.dispatchEvent(new WheelEvent("wheel", {
+                deltaY: -500,
+                clientX: canvas.clientWidth / 2,
+                clientY: canvas.clientHeight / 2,
+                bubbles: true
+              }));
+              requestAnimationFrame(step);
+            }
+            step();
+          });
+        };
+        await waitForZoom(4);
+      }
+      globalThis.addEventListener("mousemove", prevent, true);
+      $canvas.addEventListener("wheel", prevent, true);
+      const res = await fetch("https://backend.wplace.live/me", {
+        credentials: "include"
+      });
+      const data = await res.json();
+      let charges = Math.floor(data.charges.count);
+      const images = this.images.filter((i) => i.active);
+      let n = 0;
+      for (let index = 0;index < this.images.length; index++)
+        n += this.images[index].tasks.length;
+      switch (this.strategy) {
+        case "ALL" /* ALL */: {
+          while (charges > 0) {
+            let end = true;
+            for (let imageIndex = 0;imageIndex < images.length; imageIndex++) {
+              const task = images[imageIndex].tasks.shift();
+              if (!task)
+                continue;
+              this.drawTask(task);
+              charges -= 1;
+              await wait(1);
+              end = false;
+            }
+            if (end)
+              break;
+          }
+          break;
+        }
+        case "PERCENTAGE" /* PERCENTAGE */: {
+          for (let taskIndex = 0;taskIndex < n && charges > 0; taskIndex++) {
+            let minPercent = 1;
+            let minImage;
+            for (let imageIndex = 0;imageIndex < images.length; imageIndex++) {
+              const image = images[imageIndex];
+              const percent = 1 - image.tasks.length / (image.pixels.pixels.length * image.pixels.pixels[0].length);
+              if (percent < minPercent) {
+                minPercent = percent;
+                minImage = image;
+              }
+            }
+            this.drawTask(minImage.tasks.shift());
+            charges -= 1;
+            await wait(1);
+          }
+          break;
+        }
+        case "SEQUENTIAL" /* SEQUENTIAL */: {
+          for (let imageIndex = 0;imageIndex < images.length; imageIndex++) {
+            const image = images[imageIndex];
+            for (let task = image.tasks.shift();task && charges > 0; task = image.tasks.shift()) {
+              this.drawTask(task);
+              charges -= 1;
+              await wait(1);
+            }
+          }
+        }
+      }
+      this.widget.update();
+    }, () => {
+      globalThis.removeEventListener("mousemove", prevent, true);
+      $canvas.removeEventListener("wheel", prevent, true);
+      this.widget.setDisabled("draw", false);
+      this.scheduleNextAutoDraw();
+    });
+  }
+  scheduleNextAutoDraw() {
+    if (this._autoDrawTimer) {
+      clearTimeout(this._autoDrawTimer);
+      this._autoDrawTimer = null;
+    }
+    if (!this.autoDraw)
+      return;
+    const charges = this.me?.charges?.max ?? 1;
+    const SECONDS_PER_CHARGE = 30;
+    const EXTRA_SECONDS = 15;
+    const totalSeconds = Math.max(60, charges * SECONDS_PER_CHARGE + EXTRA_SECONDS);
+    const minutes = Math.round(totalSeconds / 60);
+    const ms = totalSeconds * 1000;
+    this.widget.status = `Next auto-draw in ${minutes}min (${charges} charges)`;
+    this._autoDrawTimer = setTimeout(() => {
+      this._autoDrawTimer = null;
+      if (!this.autoDraw)
+        return;
+      this.draw();
+    }, ms);
+  }
+  toggleAutoDraw(enabled) {
+    this.autoDraw = enabled;
+    if (!enabled) {
+      if (this._autoDrawTimer) {
+        clearTimeout(this._autoDrawTimer);
+        this._autoDrawTimer = null;
+      }
+      this.widget.status = "";
+    }
+  }
+  toJSON() {
+    return {
+      version: SAVE_VERSION,
+      name: this.name,
+      images: this.images.map((x) => x.toJSON()),
+      strategy: this.strategy
+    };
+  }
+  async updateColors() {
+    await this.openColors();
+    this.unavailableColors.clear();
+    for (const $button of document.querySelectorAll("button.btn.relative.w-full"))
+      if ($button.children.length !== 0)
+        this.unavailableColors.add(Math.abs(Number.parseInt($button.id.slice(6))));
+    this.updateImageColors();
+  }
+  moveMap(delta) {
+    const canvas = document.querySelector(".maplibregl-canvas");
+    const startX = window.innerWidth / 2;
+    const startY = window.innerHeight / 2;
+    const endX = startX - delta.x;
+    const endY = startY - delta.y;
+    function fire(type, x, y) {
+      canvas.dispatchEvent(new MouseEvent(type, {
+        bubbles: true,
+        cancelable: true,
+        clientX: x,
+        clientY: y,
+        buttons: 1
+      }));
+    }
+    fire("mousedown", startX, startY);
+    fire("mousemove", endX, endY);
+    fire("mouseup", endX, endY);
+  }
+  async readMap() {
+    await this.loadCacheFromDB();
+    const imagesToDownload = new Set;
+    for (let image of this.images) {
+      const { tileX: tileXEnd, tileY: tileYEnd } = new WorldPosition(this, image.position.globalX + image.pixels.pixels[0].length, image.position.globalY + image.pixels.pixels.length);
+      for (let tileX = image.position.tileX;tileX <= tileXEnd; tileX++)
+        for (let tileY = image.position.tileY;tileY <= tileYEnd; tileY++)
+          imagesToDownload.add(`${tileX}/${tileY}`);
+    }
+    let done = 0;
+    return this.widget.run(`Reading map [0/${imagesToDownload.size}]`, async () => {
+      await Promise.all([...imagesToDownload].map(async (x) => {
+        const url = `https://backend.wplace.live/files/s0/tiles/${x}.png`;
+        const response = await fetch(url, { method: "HEAD", cache: "no-store" });
+        const lastModified = response.headers.get("last-modified") || "";
+        let cached = this.mapsCache.get(x);
+        if (!cached || cached.lastModified !== lastModified) {
+          const newPixels = await Pixels.fromJSON(this, { url, exactColor: true }, { skipCache: true });
+          const tileData = { pixels: newPixels.pixels, lastModified };
+          this.mapsCache.set(x, tileData);
+          await this.saveTileToDB(x, tileData);
+        }
+        this.widget.status = `⌛ Reading map [${++done}/${imagesToDownload.size}]`;
+      }));
+    });
+  }
+  async initDB() {
+    return new Promise((resolve, reject) => {
+      const request = indexedDB.open("mapsDB", 1);
+      request.onupgradeneeded = () => {
+        const db = request.result;
+        if (!db.objectStoreNames.contains("tiles")) {
+          db.createObjectStore("tiles");
+        }
+      };
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+    });
+  }
+  async setTile(db, key, value) {
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction("tiles", "readwrite");
+      const store = tx.objectStore("tiles");
+      const req = store.put(value, key);
+      req.onsuccess = () => resolve();
+      req.onerror = () => reject(req.error);
+    });
+  }
+  async getTile(db, key) {
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction("tiles", "readonly");
+      const store = tx.objectStore("tiles");
+      const req = store.get(key);
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error);
+    });
+  }
+  async loadCacheFromDB() {
+    const db = await this.initDB();
+    this.mapsCache = new Map;
+    const keys = await new Promise((resolve, reject) => {
+      const tx = db.transaction("tiles", "readonly");
+      const store = tx.objectStore("tiles");
+      const req = store.getAllKeys();
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error);
+    });
+    for (const key of keys) {
+      const tile = await this.getTile(db, key);
+      this.mapsCache.set(key, tile);
+    }
+  }
+  async saveTileToDB(key, value) {
+    const db = await this.initDB();
+    await this.setTile(db, key, value);
+  }
+  waitForUnfocus() {
+    return this.widget.run("UNFOCUS WINDOW", () => new Promise((resolve) => {
+      if (!document.hasFocus())
+        resolve();
+      window.addEventListener("blur", () => {
+        setTimeout(resolve, 1);
+      }, {
+        once: true
+      });
+    }), undefined, "\uD83D\uDDB1️");
+  }
+  findAnchorsForScreen(position) {
+    let anchorIndex = 0;
+    let minI2 = 1;
+    let min1 = Infinity;
+    let min2 = Infinity;
+    for (let index = 0;index < this.$stars.length; index++) {
+      const { x, y } = extractScreenPositionFromStar(this.$stars[index]);
+      if (x < position.x && y < position.y) {
+        const delta = position.x - x + (position.y - y);
+        if (delta < min1) {
+          min1 = delta;
+          anchorIndex = index;
+        }
+      } else if (x > position.x && y > position.y) {
+        const delta = x - position.x + (y - position.y);
+        if (delta < min2) {
+          min2 = delta;
+          minI2 = index;
+        }
+      }
+    }
+    const anchorScreenPosition = extractScreenPositionFromStar(this.$stars[anchorIndex]);
+    const anchorWorldPosition = FAVORITE_LOCATIONS_POSITIONS[anchorIndex];
+    return {
+      anchorScreenPosition,
+      anchorWorldPosition,
+      pixelSize: (extractScreenPositionFromStar(this.$stars[minI2]).x - anchorScreenPosition.x) / (FAVORITE_LOCATIONS_POSITIONS[minI2].x - anchorWorldPosition.x)
+    };
+  }
+  async openColors() {
+    this.lastColor = undefined;
+    document.querySelector(".flex.gap-2.px-3 > .btn-circle")?.click();
+    await wait(1);
+    document.querySelector(".btn.btn-primary.btn-lg.relative.z-30")?.click();
+    await wait(1);
+    const unfoldColors = document.querySelector("button.bottom-0");
+    if (unfoldColors?.innerHTML === '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 -960 960 960" fill="currentColor" class="size-5"><path d="M480-120 300-300l58-58 122 122 122-122 58 58-180 180ZM358-598l-58-58 180-180 180 180-58 58-122-122-122 122Z"></path></svg><!---->') {
+      unfoldColors.click();
+      await wait(1);
+    }
+  }
+  drawTask(task) {
+    if (this.lastColor !== task.color) {
+      document.getElementById("color-" + task.color).click();
+      this.lastColor = task.color;
+    }
+    const halfPixel = task.position.pixelSize / 2;
+    const position = task.position.toScreenPosition();
+    document.documentElement.dispatchEvent(new MouseEvent("mousemove", {
+      bubbles: true,
+      clientX: position.x + halfPixel,
+      clientY: position.y + halfPixel,
+      shiftKey: true
+    }));
+    document.documentElement.dispatchEvent(new KeyboardEvent("keydown", {
+      key: " ",
+      code: "Space",
+      keyCode: 32,
+      which: 32,
+      bubbles: true,
+      cancelable: true
+    }));
+    document.documentElement.dispatchEvent(new KeyboardEvent("keyup", {
+      key: " ",
+      code: "Space",
+      keyCode: 32,
+      which: 32,
+      bubbles: true,
+      cancelable: true
+    }));
+    const paintBtn = document.querySelector(".btn.btn-primary");
+    if (paintBtn && !paintBtn.disabled)
+      paintBtn.click();
+  }
+  registerFetchInterceptor() {
+    const originalFetch = globalThis.fetch;
+    const pixelRegExp = /https:\/\/backend.wplace.live\/s\d+\/pixel\/(-?\d+)\/(-?\d+)\?x=(-?\d+)&y=(-?\d+)/;
+    globalThis.fetch = async (request, options) => {
+      const response = await originalFetch(request, options);
+      const cloned = response.clone();
+      let url = "";
+      if (typeof request == "string")
+        url = request;
+      else if (request instanceof Request)
+        url = request.url;
+      else if (request instanceof URL)
+        url = request.href;
+      if (response.url === "https://backend.wplace.live/me") {
+        this.me = await cloned.json();
+        this.me.favoriteLocations.unshift(...FAVORITE_LOCATIONS);
+        this.me.maxFavoriteLocations = Infinity;
+        response.json = () => Promise.resolve(this.me);
+      }
+      const pixelMatch = pixelRegExp.exec(url);
+      if (pixelMatch) {
+        for (let index = 0;index < this.markerPixelPositionResolvers.length; index++)
+          this.markerPixelPositionResolvers[index](new WorldPosition(this, +pixelMatch[1], +pixelMatch[2], +pixelMatch[3], +pixelMatch[4]));
+        this.markerPixelPositionResolvers.length = 0;
+      }
+      return response;
+    };
+  }
+  async closeAll() {
+    for (const button of document.querySelectorAll("button")) {
+      if (button.innerHTML === "✕" || button.innerHTML === `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 -960 960 960" fill="currentColor" class="size-4"><path d="m256-200-56-56 224-224-224-224 56-56 224 224 224-224 56 56-224 224 224 224-56 56-224-224-224 224Z"></path></svg><!---->`) {
+        button.click();
+        await wait(1);
+      }
+    }
+  }
+  waitForElement(name, selector) {
+    return this.widget.run(`Waiting for ${name}`, () => {
+      return new Promise((resolve) => {
+        const existing = document.querySelector(selector);
+        if (existing) {
+          resolve(existing);
+          return;
+        }
+        const observer = new MutationObserver(() => {
+          const element = document.querySelector(selector);
+          if (element) {
+            observer.disconnect();
+            resolve(element);
+          }
+        });
+        observer.observe(document.documentElement, {
+          childList: true,
+          subtree: true
+        });
+      });
+    });
+  }
+  updateStars() {
+    this.$stars = [
+      ...document.querySelectorAll(".text-yellow-400.cursor-pointer.z-10.maplibregl-marker.maplibregl-marker-anchor-center")
+    ].slice(0, FAVORITE_LOCATIONS.length);
+  }
+  updateImages() {
+    for (let index = 0;index < this.images.length; index++)
+      this.images[index].update();
+  }
+  updateTasks() {
+    for (let index = 0;index < this.images.length; index++)
+      this.images[index].updateTasks();
+  }
+  updateImageColors() {
+    for (let index = 0;index < this.images.length; index++)
+      this.images[index].updateColors();
+  }
+}
+globalThis.wbot = new WPlaceBot;
+{
+  WPlaceBot
+};
