@@ -81,6 +81,11 @@ export class WPlaceBot {
 	public autoDraw = false;
 	protected _autoDrawTimer: ReturnType<typeof setTimeout> | null = null;
 
+	/** Random delay between pixels to mimic human behavior */
+	protected randomDelay(min = 300, max = 900) {
+		return wait(min + Math.random() * (max - min));
+	}
+
 	/** Used to wait for pixel data on marker set */
 	protected markerPixelPositionResolvers: ((position: WorldPosition) => unknown)[] = [];
 
@@ -226,7 +231,7 @@ export class WPlaceBot {
 								if (!task) continue;
 								this.drawTask(task);
 								charges -= 1;
-								await wait(1);
+								await this.randomDelay();
 								end = false;
 							}
 							if (end) break;
@@ -249,7 +254,7 @@ export class WPlaceBot {
 							}
 							this.drawTask(minImage.tasks.shift()!);
 							charges -= 1;
-							await wait(1);
+							await this.randomDelay();
 						}
 						break;
 					}
@@ -259,7 +264,7 @@ export class WPlaceBot {
 							for (let task = image.tasks.shift(); task && charges > 0; task = image.tasks.shift()) {
 								this.drawTask(task);
 								charges -= 1;
-								await wait(1);
+								await this.randomDelay();
 							}
 						}
 					}
@@ -525,11 +530,13 @@ export class WPlaceBot {
 		}
 		const halfPixel = task.position.pixelSize / 2;
 		const position = task.position.toScreenPosition();
+		const jitterX = (Math.random() - 0.5) * 4;
+		const jitterY = (Math.random() - 0.5) * 4;
 		document.documentElement.dispatchEvent(
 			new MouseEvent('mousemove', {
 				bubbles: true,
-				clientX: position.x + halfPixel,
-				clientY: position.y + halfPixel,
+				clientX: position.x + halfPixel + jitterX,
+				clientY: position.y + halfPixel + jitterY,
 				shiftKey: true,
 			})
 		);

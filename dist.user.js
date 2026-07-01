@@ -2610,6 +2610,9 @@ class WPlaceBot {
   widget = new Widget(this);
   autoDraw = false;
   _autoDrawTimer = null;
+  randomDelay(min = 300, max = 900) {
+    return wait(min + Math.random() * (max - min));
+  }
   markerPixelPositionResolvers = [];
   lastColor;
   constructor() {
@@ -2724,7 +2727,7 @@ class WPlaceBot {
                 continue;
               this.drawTask(task);
               charges -= 1;
-              await wait(1);
+              await this.randomDelay();
               end = false;
             }
             if (end)
@@ -2746,7 +2749,7 @@ class WPlaceBot {
             }
             this.drawTask(minImage.tasks.shift());
             charges -= 1;
-            await wait(1);
+            await this.randomDelay();
           }
           break;
         }
@@ -2756,7 +2759,7 @@ class WPlaceBot {
             for (let task = image.tasks.shift();task && charges > 0; task = image.tasks.shift()) {
               this.drawTask(task);
               charges -= 1;
-              await wait(1);
+              await this.randomDelay();
             }
           }
         }
@@ -2973,10 +2976,12 @@ class WPlaceBot {
     }
     const halfPixel = task.position.pixelSize / 2;
     const position = task.position.toScreenPosition();
+    const jitterX = (Math.random() - 0.5) * 4;
+    const jitterY = (Math.random() - 0.5) * 4;
     document.documentElement.dispatchEvent(new MouseEvent("mousemove", {
       bubbles: true,
-      clientX: position.x + halfPixel,
-      clientY: position.y + halfPixel,
+      clientX: position.x + halfPixel + jitterX,
+      clientY: position.y + halfPixel + jitterY,
       shiftKey: true
     }));
     document.documentElement.dispatchEvent(new KeyboardEvent("keydown", {
