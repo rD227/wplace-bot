@@ -1,0 +1,607 @@
+/* stylelint-disable declaration-no-important */
+/* stylelint-disable plugin/no-low-performance-animation-properties */
+/* stylelint-disable no-descending-specificity */
+@import 'https://fonts.googleapis.com/css2?family=Tiny5&display=swap';
+
+:root {
+	--hover: #dfdfdf;
+	--text-invert: #fff;
+	--error: #f00;
+	--resize: 8px;
+	--asdadsasdasdasdasdasdasdasd: 1px;
+	--text: #422e2c;
+	--background: #fbe3cb;
+	--background-hover: #f0d1b3;
+	--background-disabled: #a37648;
+	--main: #66bbb4;
+	--main-hover: #48a19a;
+
+	--text-r: 66;
+	--text-g: 46;
+	--text-b: 44;
+}
+
+.text-yellow-400.cursor-pointer.z-10.maplibregl-marker.maplibregl-marker-anchor-center:nth-child(
+		-n + FAKE_FAVORITE_LOCATIONS
+	) {
+	display: none;
+}
+
+/** Widget */
+.wwidget {
+	position: fixed;
+	top: 0;
+	left: 0;
+	z-index: 1000;
+	display: flex;
+	flex-direction: column;
+	width: 256px;
+	height: 100dvh;
+	border-right: var(--text) 2px solid;
+	background-color: var(--background);
+	color: var(--text);
+	font-family: 'Tiny5', sans-serif;
+	transition: transform 0.5s;
+	transform: translateX(-100%);
+}
+
+.wwidget .title {
+	flex-shrink: 0;
+	border-bottom: var(--text) 2px solid;
+	background-color: var(--main);
+	font-size: 32px;
+	text-align: center;
+	cursor: text;
+	user-select: none;
+}
+
+.wwidget .title input {
+	width: 100%;
+	background: transparent;
+	border: none;
+	outline: none;
+	text-align: center;
+	font: inherit;
+	color: inherit;
+	cursor: text;
+}
+
+.wwidget > .wform {
+	display: flex;
+	flex-direction: column;
+	flex: 1;
+	overflow: hidden;
+	min-height: 0;
+}
+
+.wwidget.wopen .wopen-button div {
+	transform: rotate(180deg);
+}
+
+.wwidget.wopen {
+	box-shadow: 8px 0 16px -8px var(--main);
+	transform: translateX(0);
+}
+
+.wwidget .wopen-button div {
+	transition: transform 0.5s;
+}
+
+.wwidget .wopen-button {
+	position: absolute;
+	top: calc(50% - 24px);
+	right: -24px;
+	width: 24px;
+	height: 48px;
+	border: var(--text) 2px solid;
+	border-left: none;
+	background-color: var(--background);
+	color: var(--text);
+	cursor: pointer;
+}
+
+.wwidget .images {
+	display: block;
+	flex: 0 1 auto;
+	overflow-x: hidden;
+	overflow-y: auto;
+	min-height: 0;
+}
+
+.wwidget .images .image {
+	display: flex;
+	align-items: center;
+	width: 100%;
+	height: 64px;
+}
+
+.wwidget .images .image img {
+	max-width: 100%;
+	max-height: 100%;
+	margin: 0 auto;
+	cursor: pointer;
+}
+
+.wwidget .images .image button {
+	width: 32px;
+	height: 64px;
+	font-weight: bolder;
+	font-size: 24px;
+}
+
+/** Image */
+.wimage {
+	position: fixed;
+	top: 0;
+	left: 0;
+	z-index: 9;
+}
+
+.wimage canvas {
+	width: 100%;
+	box-shadow: inset var(--text) 0 0 0 2px;
+	cursor: all-scroll;
+	image-rendering: pixelated;
+}
+
+.wimage .wform {
+	position: absolute;
+	display: none;
+	width: 100%;
+	min-width: 256px;
+	border: var(--text) 2px solid;
+	background-color: var(--background);
+	color: var(--text);
+}
+
+.wimage:hover .wrapper .wform {
+	display: block;
+}
+
+/* Settings */
+.wform {
+	font-family: 'Tiny5', sans-serif;
+}
+
+.wform > * {
+	display: flex;
+	justify-content: center;
+	align-items: center;
+	overflow: hidden;
+	width: calc(100% - 8px);
+	margin: 4px;
+	text-align: center;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.wform button,
+.wform input,
+.wform select,
+.wform textarea,
+.wform label:has(input[type='checkbox']) {
+	padding: 0 8px;
+	border: var(--text) 2px solid;
+	cursor: pointer;
+	transition: background-color 0.2s;
+}
+
+.wform input[type='range'] {
+	width: 100%;
+	height: 32px;
+	background: linear-gradient(to right, var(--main) var(--val), var(--background-disabled) var(--val));
+	cursor: ew-resize;
+	appearance: none;
+}
+
+.wform input[type='range']::-moz-range-thumb {
+	width: 0;
+	height: 0;
+	opacity: 0;
+}
+
+.wform button:hover,
+.wform input:hover {
+	background-color: var(--background-hover);
+}
+
+.wform button:disabled,
+.wform input:disabled {
+	background-color: var(--background-disabled);
+	cursor: no-drop;
+}
+
+.wform label input:not([type='checkbox']) {
+	width: inherit;
+}
+
+.wform .wprogress {
+	position: relative;
+	width: 100%;
+	margin: 0;
+}
+
+.wform .wprogress div {
+	position: absolute;
+	width: 100%;
+	height: 100%;
+	background-color: var(--main);
+	transform-origin: left;
+}
+
+.wform .wprogress span {
+	z-index: 0;
+}
+
+.wform .colors {
+	display: block;
+	overflow-y: auto;
+	min-height: 200px;
+	touch-action: pan-y;
+}
+
+.wform .colors > button {
+	position: relative;
+	width: 100%;
+	display: flex;
+	border: none;
+	align-items: center;
+	justify-content: end;
+	padding: 0;
+	padding-right: 2px;
+	padding-left: 2px;
+}
+
+.wform .colors > button:hover {
+	filter: brightness(0.6);
+}
+
+.wform .colors > button.color-dark {
+	color: var(--text-invert);
+}
+
+.wform .colors > button.color-dark svg {
+	fill: var(--text-invert);
+}
+
+.wform .colors > button.color-disabled {
+	cursor: no-drop;
+	border: 2px solid red;
+}
+
+.wform .colors > button.substitution button {
+	position: absolute;
+	top: 0;
+	left: 0;
+	width: 100%;
+	height: 100%;
+	padding: 0 4px;
+	color: var(--background);
+	transition: 0.2s filter;
+}
+
+.wform .colors > button.substitution button:hover {
+	filter: brightness(0.6);
+}
+
+.wform .colors > button.substitution button:first-child {
+	background: var(--wreal-color);
+	text-align: left;
+	clip-path: polygon(0 0, 80% 0, 20% 100%, 0 100%);
+}
+
+.wform .colors > button.substitution button:last-child {
+	background: var(--wsubstitution-color);
+	text-align: right;
+	clip-path: polygon(100% 100%, 100% 0, 80% 0, 20% 100%);
+}
+
+.wform .colors > button.substitution:hover {
+	filter: none;
+}
+
+/* Move */
+.wtopbar {
+	position: absolute;
+	top: -24px;
+	left: 0;
+	display: flex;
+	justify-content: end;
+	align-items: center;
+	width: 100%;
+	min-width: min-content;
+	min-width: 256px;
+	border: var(--text) 2px solid;
+	background-color: var(--main);
+	color: var(--text-invert);
+	cursor: all-scroll;
+}
+
+.wtopbar button {
+	display: flex;
+	justify-content: center;
+	align-items: center;
+	width: 24px;
+	height: 24px;
+}
+
+.wtopbar button:hover {
+	background-color: var(--main-hover);
+}
+
+/* Selection rect */
+.selection-rect {
+	position: absolute;
+	display: none;
+	border: 2px dashed #fff;
+	background: rgba(102, 187, 180, 0.15);
+	pointer-events: none;
+	box-sizing: border-box;
+	box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.4);
+	z-index: 2;
+}
+
+/* Resize */
+.resize {
+	position: absolute;
+	width: calc(100% - var(--resize) - var(--resize));
+	height: calc(100% - var(--resize) - var(--resize));
+}
+
+.resize.n {
+	top: 0;
+	left: var(--resize);
+	height: var(--resize);
+	cursor: n-resize;
+}
+
+.resize.e {
+	top: var(--resize);
+	right: 0;
+	width: var(--resize);
+	cursor: e-resize;
+}
+
+.resize.s {
+	bottom: 0;
+	left: var(--resize);
+	height: var(--resize);
+	cursor: s-resize;
+}
+
+.resize.w {
+	top: var(--resize);
+	left: 0;
+	width: var(--resize);
+	cursor: w-resize;
+}
+
+/* Utility */
+.wp {
+	padding: 0 8px;
+}
+
+.hidden {
+	display: none;
+}
+
+.no-pointer-events {
+	height: 1px;
+	pointer-events: none;
+}
+
+.custom-dialog {
+	position: fixed;
+	top: 50%;
+	left: 50%;
+	transform: translate(-50%, -50%);
+	border: var(--text) 2px solid;
+	background: var(--background);
+	color: var(--text);
+	font-family: 'Tiny5', sans-serif;
+	padding: 16px;
+	min-width: 220px;
+}
+
+.custom-dialog::backdrop {
+	background: rgba(0, 0, 0, 0.45);
+}
+
+.custom-dialog form {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+}
+
+.custom-dialog label {
+	display: flex;
+	justify-content: space-between;
+	align-items: center;
+}
+
+.custom-dialog input[type='number'] {
+	width: 100px;
+	padding: 4px 6px;
+	border: var(--text) 2px solid;
+	background: var(--background);
+	color: var(--text);
+	font-family: 'Tiny5', sans-serif;
+}
+
+.custom-dialog button {
+	padding: 4px 8px;
+	border: var(--text) 2px solid;
+	background: var(--main);
+	color: var(--text-invert);
+	font-family: 'Tiny5', sans-serif;
+	cursor: pointer;
+}
+
+.custom-dialog button:hover {
+	background: var(--main-hover);
+}
+.wform.popup {
+	position: fixed;
+	top: 50%;
+	left: 50%;
+	transform: translate(-50%, -50%);
+	border: 2px solid #ccc;
+	box-shadow: 0 0 15px rgba(0, 0, 0, 0.3);
+	display: none;
+	z-index: 10;
+	background-color: var(--background);
+	border: var(--text) 2px solid;
+	color: var(--text);
+	font-family: 'Tiny5', sans-serif;
+	box-shadow: 0 0 15px rgba(0, 0, 0, 0.4);
+	min-width: 350px;
+}
+
+.wform.popup.show {
+	display: grid;
+	grid-template-rows: auto auto 1fr auto;
+	min-width: 540px;
+	min-height: 600px;
+	width: 540px;
+	height: 600px;
+}
+
+.wform.popup .popup-header {
+	width: 100%;
+	display: flex;
+	justify-content: space-between;
+	align-items: center;
+	cursor: move;
+	padding: 4px;
+	margin: 0;
+	margin-bottom: 8px;
+	background-color: var(--main);
+	color: var(--text-invert);
+	user-select: none;
+}
+
+.wform.popup .close-popup {
+	border: none;
+	background: #f00;
+	color: #fff;
+	width: 24px;
+	height: 24px;
+	cursor: pointer;
+	font-size: 16px;
+	line-height: 24px;
+	display: flex;
+	justify-content: center;
+}
+
+.wform.popup .close-popup:hover {
+	background: #c00;
+}
+.image.inactive {
+	opacity: 0.4;
+	filter: grayscale(1);
+}
+
+.wwidget .images .image .toggle {
+	width: 48px;
+	height: 28px;
+	margin-left: 4px;
+	border: 2px solid var(--text);
+	border-radius: 4px;
+	background-color: var(--main);
+	color: var(--text-invert);
+	font-size: 14px;
+	font-weight: bold;
+	transition:
+		background-color 0.2s,
+		color 0.2s,
+		transform 0.1s;
+	cursor: pointer;
+}
+
+.wwidget .images .image .toggle:hover {
+	background-color: var(--main-hover);
+}
+
+.wwidget .images .image.inactive .toggle {
+	background-color: var(--background-disabled);
+	color: var(--text);
+	cursor: not-allowed;
+}
+
+.wwidget .images .image .toggle:active {
+	transform: scale(0.95);
+}
+
+.popup-resize {
+	position: absolute;
+	z-index: 10;
+}
+
+.popup-resize.n {
+	top: 0;
+	left: 0;
+	right: 0;
+	height: 6px;
+	cursor: n-resize;
+	margin: 0;
+}
+.popup-resize.s {
+	bottom: 0;
+	left: 0;
+	right: 0;
+	height: 6px;
+	cursor: s-resize;
+	margin: 0;
+}
+.popup-resize.e {
+	top: 0;
+	right: 0;
+	bottom: 0;
+	width: 6px;
+	cursor: e-resize;
+	margin: 0;
+}
+.popup-resize.w {
+	top: 0;
+	left: 0;
+	bottom: 0;
+	width: 6px;
+	cursor: w-resize;
+	margin: 0;
+}
+
+.popup-resize.ne {
+	top: 0;
+	right: 0;
+	width: 10px;
+	height: 10px;
+	cursor: ne-resize;
+	margin: 0;
+}
+.popup-resize.nw {
+	top: 0;
+	left: 0;
+	width: 10px;
+	height: 10px;
+	cursor: nw-resize;
+	margin: 0;
+}
+.popup-resize.se {
+	bottom: 0;
+	right: 0;
+	width: 10px;
+	height: 10px;
+	cursor: se-resize;
+	margin: 0;
+}
+.popup-resize.sw {
+	bottom: 0;
+	left: 0;
+	width: 10px;
+	height: 10px;
+	cursor: sw-resize;
+	margin: 0;
+}
+
+.auto-draw-label { display: flex; align-items: center; gap: 6px; font-size: 13px; cursor: pointer; margin-top: 4px; }
+.auto-draw-label input { margin: 0; }

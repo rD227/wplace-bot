@@ -2761,6 +2761,9 @@ class WPlaceBot {
           }
         }
       }
+      const paintBtn = document.querySelector(".btn.btn-primary");
+      if (paintBtn && !paintBtn.disabled)
+        paintBtn.click();
       this.widget.update();
     }, () => {
       globalThis.removeEventListener("mousemove", prevent, true);
@@ -2992,9 +2995,6 @@ class WPlaceBot {
       bubbles: true,
       cancelable: true
     }));
-    const paintBtn = document.querySelector(".btn.btn-primary");
-    if (paintBtn && !paintBtn.disabled)
-      paintBtn.click();
   }
   registerFetchInterceptor() {
     const originalFetch = globalThis.fetch;
