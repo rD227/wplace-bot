@@ -482,7 +482,8 @@ export class BotImage extends Base {
 
 			const mapColor = position.getMapColor();
 
-			if (color !== mapColor && (this.drawTransparentPixels || color !== 0)) {
+			const isTransparent = this.pixels.transparentMask?.[y]?.[x] ?? false;
+			if (color !== mapColor && (this.drawTransparentPixels || color !== 0 || (color === 0 && !isTransparent))) {
 				const fullTask: DrawTask = {
 					position: position.clone(),
 					color,
